@@ -1,0 +1,18 @@
+[Unit]
+Description=community-radar, MCP server for the OVHcloud Public Cloud community
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=radar
+EnvironmentFile=/etc/community-radar.env
+ExecStart=/opt/community-radar/.venv/bin/community-radar serve --transport streamable-http
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

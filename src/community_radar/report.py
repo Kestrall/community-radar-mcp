@@ -126,7 +126,7 @@ def render_html(s: Snapshot) -> str:
         (
             _delay(p.median_first_response_hours),
             "median first response",
-            f"forum, {p.first_response_sample} topics opened in the period",
+            f"forum, {p.first_response_sample} topic{'s' if p.first_response_sample > 1 else ''} opened in the period",
         ),
         (_pct(p.solved_rate), "solved / closed", "forum & GitHub"),
     ]
@@ -213,7 +213,7 @@ def render_telegram(s: Snapshot) -> list[str]:
         f"• {p.unanswered} without reply · answered {_pct(p.answered_rate)} · solved {_pct(p.solved_rate)}\n"
         + (
             f"• Forum median first response: {_delay(p.median_first_response_hours)} "
-            f"({p.first_response_sample} new topics)\n"
+            f"({p.first_response_sample} new topic{'s' if p.first_response_sample > 1 else ''})\n"
             if p.median_first_response_hours is not None
             else ""
         )

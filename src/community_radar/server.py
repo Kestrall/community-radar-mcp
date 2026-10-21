@@ -95,8 +95,8 @@ class PulseOut(BaseModel):
     period_days: int
     product: str | None
     active_threads: int
-    previous_period_active_threads: int
     new_threads: int
+    previous_period_new_threads: int
     by_source: dict[str, int]
     by_product: dict[str, int]
     by_signal: dict[str, int]
@@ -112,7 +112,8 @@ class PulseOut(BaseModel):
 class IrritantOut(BaseModel):
     product: str
     active_threads: int
-    previous_period_threads: int
+    new_threads: int
+    previous_period_new_threads: int
     negative_threads: int
     signals: dict[str, int]
     engagement: float
@@ -176,8 +177,8 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
             period_days=days,
             product=label(key) if key else None,
             active_threads=p.total,
-            previous_period_active_threads=p.previous_total,
             new_threads=p.new_threads,
+            previous_period_new_threads=p.previous_new_threads,
             by_source=p.by_source,
             by_product=p.by_product,
             by_signal=p.by_signal,
@@ -193,13 +194,14 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
     @mcp.tool(annotations=READ_ONLY)
     async def find_irritants(days: int = 14, limit: int = 5) -> list[IrritantOut]:
         """Products ranked by pain: negative signals (incidents, bugs, billing, security), engagement and growth
-        versus the previous period, with example threads. Ideal input for a report to product managers."""
+        of new threads versus the previous period, with example threads. Input for a report to product managers."""
         threads = await collector.threads()
         return [
             IrritantOut(
                 product=i.label,
                 active_threads=i.threads,
-                previous_period_threads=i.previous_threads,
+                new_threads=i.new_threads,
+                previous_period_new_threads=i.previous_threads,
                 negative_threads=i.negative_threads,
                 signals=i.signals,
                 engagement=i.engagement,

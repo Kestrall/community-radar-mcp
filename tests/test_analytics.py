@@ -5,7 +5,7 @@ from tests.conftest import THREADS, thread
 async def test_pulse_counts_and_compares_periods(collector):
     p = await analytics.pulse(collector, THREADS, 7, None)
     assert p.total == 7
-    assert p.previous_total == 0
+    assert p.previous_new_threads == 0
     assert p.by_source["forum"] == 3
     assert p.unanswered == 3  # two forum topics and one GitHub issue, roadmap excluded
     assert p.median_first_response_hours == 2.0

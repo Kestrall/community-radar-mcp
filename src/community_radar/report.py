@@ -113,8 +113,8 @@ def _link(t: Thread) -> str:
 def render_html(s: Snapshot) -> str:
     p = s.pulse
     kpis = [
-        (p.total, "active threads", _trend(p.total, p.previous_total)),
-        (p.new_threads, "new threads", f"over {s.days} days"),
+        (p.total, "active threads", f"over {s.days} days"),
+        (p.new_threads, "new threads", _trend(p.new_threads, p.previous_new_threads)),
         (p.unanswered, "without any reply", "forum & GitHub"),
         (_pct(p.answered_rate), "answered", "at least one reply"),
         (
@@ -135,7 +135,7 @@ def render_html(s: Snapshot) -> str:
     sources = ", ".join(f"{SOURCE_NAMES.get(k, k)} {v}" for k, v in p.by_source.items())
     irritants = "".join(
         f"<div class=card><span class=score>score {i.score}</span><h3>{escape(i.label)}</h3>"
-        f"<div class=meta>{i.threads} threads ({_trend(i.threads, i.previous_threads)}), "
+        f"<div class=meta>{i.threads} threads, {i.new_threads} new ({_trend(i.new_threads, i.previous_threads)}), "
         f"{i.negative_threads} negative</div><ul>"
         + "".join(
             f"<li>{_link(t)}{_badges(t)} <span class=muted>· {SOURCE_NAMES.get(t.source, t.source)}</span></li>"
@@ -203,7 +203,7 @@ def render_telegram(s: Snapshot) -> list[str]:
     e = escape
     head = (
         f"📡 <b>Public Cloud Community Radar</b> · last {s.days} days\n\n"
-        f"• {p.total} active threads ({_trend(p.total, p.previous_total)}), {p.new_threads} new\n"
+        f"• {p.total} active threads, {p.new_threads} new ({_trend(p.new_threads, p.previous_new_threads)})\n"
         f"• {p.unanswered} without reply · answered {_pct(p.answered_rate)} · solved {_pct(p.solved_rate)}\n"
         + (
             f"• Forum median first response: {p.median_first_response_hours} h\n"

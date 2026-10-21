@@ -39,17 +39,21 @@ class Pulse:
     solved_rate: float | None
     median_first_response_hours: float | None
     staff_reply_rate: float | None
-    previous_total: int
     new_threads: int
+    previous_new_threads: int
     top_threads: list[Thread] = field(default_factory=list)
 
 
 async def pulse(collector: Collector, threads: list[Thread], days: int, product: str | None) -> Pulse:
     current = by_product(window(threads, days), product)
-    previous = by_product(window(threads, days, datetime.now(UTC) - timedelta(days=days)), product)
+    # Compare periods on threads created in them: activity-based windows would empty the previous period, since
+    # anything active then and active again since only counts in the current one.
+    new = by_product(window(threads, days, new_only=True), product)
+    previous = by_product(window(threads, days, datetime.now(UTC) - timedelta(days=days), new_only=True), product)
     # Roadmap items are wishes, not questions: they do not count in answer metrics.
     known = [t for t in current if t.answered is not None and t.source != "roadmap"]
-    forum = [t for t in current if t.source == "forum"]
+    # First response time only makes sense for topics opened in the period, not for old topics revived by a reply.
+    forum = [t for t in new if t.source == "forum"]
     responses = await asyncio.gather(*(collector.first_response(t) for t in forum))
     delays = [
         (first - t.created).total_seconds() / 3600 for t, (first, _) in zip(forum, responses, strict=True) if first
@@ -67,8 +71,8 @@ async def pulse(collector: Collector, threads: list[Thread], days: int, product:
         solved_rate=round(sum(1 for t in questions if t.solved) / len(questions), 2) if questions else None,
         median_first_response_hours=round(median(delays), 1) if delays else None,
         staff_reply_rate=round(sum(answered_forum) / len(answered_forum), 2) if answered_forum else None,
-        previous_total=len(previous),
-        new_threads=len(by_product(window(threads, days, new_only=True), product)),
+        new_threads=len(new),
+        previous_new_threads=len(previous),
         top_threads=sorted(current, key=lambda t: -t.engagement)[:5],
     )
 
@@ -89,6 +93,7 @@ class Irritant:
     product: str
     label: str
     threads: int
+    new_threads: int
     previous_threads: int
     negative_threads: int
     signals: dict[str, int]
@@ -100,7 +105,8 @@ class Irritant:
 def irritants(threads: list[Thread], days: int, limit: int = 6) -> list[Irritant]:
     """Products that generate the most negative, engaging or fast-growing conversations."""
     current = window(threads, days)
-    previous = window(threads, days, datetime.now(UTC) - timedelta(days=days))
+    created = Counter(p for t in window(threads, days, new_only=True) for p in t.products or ["other"])
+    previous = window(threads, days, datetime.now(UTC) - timedelta(days=days), new_only=True)
     groups: dict[str, list[Thread]] = defaultdict(list)
     for t in current:
         for p in t.products or ["other"]:
@@ -110,7 +116,7 @@ def irritants(threads: list[Thread], days: int, limit: int = 6) -> list[Irritant
     for product, items in groups.items():
         negative = [t for t in items if set(t.signals) & set(NEGATIVE)]
         engagement = sum(t.engagement for t in items)
-        growth = max(0, len(items) - before[product]) / max(before[product], 1)
+        growth = max(0, created[product] - before[product]) / max(before[product], 1)
         # Roadmap items are wishes rather than pain points: they weigh half as much.
         volume = sum(0.5 if t.source == "roadmap" else 1 for t in items)
         score = len(negative) * 3 + volume + engagement / 10 + growth * 2
@@ -119,6 +125,7 @@ def irritants(threads: list[Thread], days: int, limit: int = 6) -> list[Irritant
                 product=product,
                 label=label(product) if product != "other" else "Other / unclassified",
                 threads=len(items),
+                new_threads=created[product],
                 previous_threads=before[product],
                 negative_threads=len(negative),
                 signals=dict(Counter(s for t in items for s in t.signals).most_common()),

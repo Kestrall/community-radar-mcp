@@ -16,12 +16,16 @@ guide, report irritants to product teams with data, and turn recurring questions
 | Forum | [community.ovhcloud.com](https://community.ovhcloud.com/c/public-cloud/11), Public Cloud category (Discourse JSON API) | topics, replies, views, likes, accepted answers, staff replies |
 | Public roadmap | [ovh/public-cloud-roadmap](https://github.com/ovh/public-cloud-roadmap) | requests, product labels, 👍 votes, shipped/closed state |
 | GitHub issues | [ovh/terraform-provider-ovh](https://github.com/ovh/terraform-provider-ovh), [ovh/ovhcloud-cli](https://github.com/ovh/ovhcloud-cli) | bug reports and questions from IaC/CLI users |
-| Reddit | [r/ovh](https://www.reddit.com/r/ovh) | newest posts (official API when credentials are set, RSS otherwise) |
+| Reddit | [r/ovh](https://www.reddit.com/r/ovh) | newest posts, through the official API, only when approved credentials are set |
 | Official guides | [ovh/docs](https://github.com/ovh/docs) | ~500 Public Cloud guides, indexed for search (bundled, rebuildable) |
 
 Every thread is classified by **product** (Compute, Managed Kubernetes, Object Storage, Block Storage, Network,
 Managed Databases, AI, Data, API/CLI/IaC, Registry, Billing, IAM) and **signal** (incident, bug, billing,
 security, feature request, question), in English and French.
+
+Reddit requires approved access to its Data API
+([Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy)),
+so the radar does not scrape it: the channel stays off until credentials are configured.
 
 ## Tools
 
@@ -87,7 +91,7 @@ From the shell: `community-radar report --days 7 -o radar.html`, `community-rada
 | Variable | Default | |
 |---|---|---|
 | `GITHUB_TOKEN` | – | read-only token (fine-grained, public repositories) |
-| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | – | Reddit "script" app for the official API; RSS fallback otherwise |
+| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | – | Reddit "script" app for the official API; the Reddit channel is off without them |
 | `RADAR_CACHE_TTL` | `900` | cache for community data, in seconds (the full roadmap is cached 6 h) |
 | `RADAR_DOCS_INDEX` | bundled | path to a guide index rebuilt with `community-radar build-docs` |
 | `RADAR_HOST`, `RADAR_PORT` | `127.0.0.1`, `8000` | HTTP transport |

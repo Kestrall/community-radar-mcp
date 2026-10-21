@@ -21,7 +21,7 @@ class Thread:
     replies: int = 0
     views: int = 0
     reactions: int = 0  # likes on the forum, 👍 votes on GitHub
-    answered: bool | None = None  # someone other than the author replied (None: unknown, e.g. Reddit RSS)
+    answered: bool | None = None  # someone other than the author replied (None: unknown)
     solved: bool = False  # accepted answer on the forum, closed issue on GitHub
     labels: list[str] = field(default_factory=list)
     channel: str = ""  # e.g. "ovh/terraform-provider-ovh", "r/ovh"

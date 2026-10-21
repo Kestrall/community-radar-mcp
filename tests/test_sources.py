@@ -32,13 +32,35 @@ ISSUE = {
     "labels": [{"name": "bug"}],
     "reactions": {"+1": 3, "heart": 1, "hooray": 0},
 }
-RSS = """<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><id>t3_a</id>
-<title>Kubernetes cluster stuck</title><link href="https://www.reddit.com/r/ovh/comments/a/"/>
-<updated>2026-10-21T10:00:00+00:00</updated><published>2026-10-21T10:00:00+00:00</published>
-<author><name>/u/bob</name></author><content type="html">&lt;p&gt;help&lt;/p&gt;</content></entry></feed>"""
+REDDIT = {
+    "data": {
+        "children": [
+            {
+                "data": {
+                    "name": "t3_b",
+                    "title": "MKS upgrade failed",
+                    "permalink": "/r/ovh/comments/b/",
+                    "created_utc": 1792500000,
+                    "edited": False,
+                    "selftext": "node pool stuck",
+                    "author": "carol",
+                    "num_comments": 4,
+                    "score": 7,
+                    "link_flair_text": "Public Cloud",
+                }
+            }
+        ]
+    }
+}
 
 
-def mock_all(router, reddit=RSS):
+@pytest.fixture
+def reddit_credentials(monkeypatch):
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
+
+
+def mock_all(router):
     router.get(url__regex=rf"{FORUM}/c/public-cloud/11/l/latest.json.*").respond(
         json={"topic_list": {"topics": [PINNED, TOPIC], "more_topics_url": None}}
     )
@@ -57,11 +79,12 @@ def mock_all(router, reddit=RSS):
     router.get(url__regex=r"https://api\.github\.com/repos/ovh/[^/]+/issues\?.*").respond(
         json=[ISSUE, {**ISSUE, "number": 1, "pull_request": {}}]
     )
-    router.get("https://www.reddit.com/r/ovh/new/.rss").respond(text=reddit)
+    router.post("https://www.reddit.com/api/v1/access_token").respond(json={"access_token": "tok"})
+    router.get(url__regex=r"https://oauth\.reddit\.com/r/ovh/new.*").respond(json=REDDIT)
 
 
 @respx.mock
-async def test_collects_every_channel():
+async def test_collects_every_channel(reddit_credentials):
     mock_all(respx)
     collector = Collector(github_token="t")
     threads = await collector.threads()
@@ -73,22 +96,36 @@ async def test_collects_every_channel():
     issue = next(t for t in threads if t.source == "github")
     assert issue.reactions == 4 and issue.answered and not issue.solved
     reddit = next(t for t in threads if t.source == "reddit")
-    assert reddit.author == "bob" and reddit.answered is None and "kubernetes" in reddit.products
+    assert reddit.author == "carol" and reddit.replies == 4 and reddit.reactions == 7 and reddit.answered
+    assert reddit.labels == ["Public Cloud"] and "kubernetes" in reddit.products
     assert respx.calls[-1].request.headers.get("user-agent", "").startswith("community-radar-mcp")
+    oauth = next(c for c in respx.calls if c.request.url.host == "oauth.reddit.com")
+    assert oauth.request.headers["authorization"] == "Bearer tok"
     first, staff = await collector.first_response(forum)
     assert first.hour == 13 and staff  # the author's own follow-up does not count
     assert collector.errors == {}
 
 
 @respx.mock
-async def test_failing_channel_is_reported_not_fatal():
+async def test_reddit_is_off_without_credentials(monkeypatch):
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
     mock_all(respx)
-    respx.get("https://www.reddit.com/r/ovh/new/.rss").respond(429)
+    collector = Collector(github_token="t")
+    threads = await collector.threads()
+    assert not collector.reddit_enabled and collector.errors == {}
+    assert "reddit" not in {t.source for t in threads}
+    assert not any("reddit.com" in str(call.request.url) for call in respx.calls)
+
+
+@respx.mock
+async def test_failing_channel_is_reported_not_fatal(reddit_credentials):
+    mock_all(respx)
+    respx.get(url__regex=r"https://oauth\.reddit\.com/r/ovh/new.*").respond(429)
     collector = Collector(github_token="")
     threads = await collector.threads()
     assert "reddit" in collector.errors
     assert any(t.source == "forum" for t in threads)
-    respx.get("https://www.reddit.com/r/ovh/new/.rss").respond(text=RSS)
+    respx.get(url__regex=r"https://oauth\.reddit\.com/r/ovh/new.*").respond(json=REDDIT)
     assert any(t.source == "reddit" for t in await collector.threads())  # the failure was not cached
     assert "reddit" not in collector.errors
 
@@ -118,39 +155,6 @@ async def test_issue_conversation_flags_maintainers():
     thread, posts = await Collector(github_token="t").issue_conversation("ovh/ovhcloud-cli", 300)
     assert thread.source == "github" and [p.staff for p in posts] == [False, True]
     assert respx.calls[0].request.headers["authorization"] == "Bearer t"
-
-
-@respx.mock
-async def test_reddit_official_api(monkeypatch):
-    monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
-    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
-    respx.post("https://www.reddit.com/api/v1/access_token").respond(json={"access_token": "tok"})
-    respx.get(url__regex=r"https://oauth\.reddit\.com/r/ovh/new.*").respond(
-        json={
-            "data": {
-                "children": [
-                    {
-                        "data": {
-                            "name": "t3_b",
-                            "title": "MKS upgrade failed",
-                            "permalink": "/r/ovh/comments/b/",
-                            "created_utc": 1792500000,
-                            "edited": False,
-                            "selftext": "node pool stuck",
-                            "author": "carol",
-                            "num_comments": 4,
-                            "score": 7,
-                            "link_flair_text": "Public Cloud",
-                        }
-                    }
-                ]
-            }
-        }
-    )
-    collector = Collector(github_token="")
-    [post] = await collector._reddit()
-    assert post.replies == 4 and post.reactions == 7 and post.answered and post.labels == ["Public Cloud"]
-    assert respx.calls[1].request.headers["authorization"] == "Bearer tok"
 
 
 def test_html_to_text():

@@ -32,6 +32,7 @@ class Snapshot:
     gaps: list[analytics.Gap]
     top_requests: list[Thread]
     errors: dict[str, str]
+    reddit: bool = False
 
 
 async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7) -> Snapshot:
@@ -46,6 +47,7 @@ async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7) -> Snap
         gaps=analytics.content_gaps(threads, docs, max(days, 30), 6),
         top_requests=sorted(requests, key=lambda t: -t.reactions)[:6],
         errors=dict(collector.errors),
+        reddit=collector.reddit_enabled,
     )
 
 
@@ -195,7 +197,7 @@ def render_html(s: Snapshot) -> str:
 <h2>Most wanted on the roadmap</h2>
 <table><tr><th>Request</th><th>Votes</th><th>Comments</th><th>Labels</th></tr>{requests}</table>
 <p class=note>Sources: community.ovhcloud.com (Public Cloud), github.com/ovh/public-cloud-roadmap,
-ovh/terraform-provider-ovh, ovh/ovhcloud-cli, Reddit r/ovh, github.com/ovh/docs. Independent project built on public
+ovh/terraform-provider-ovh, ovh/ovhcloud-cli,{" Reddit r/ovh," if s.reddit else ""} github.com/ovh/docs. Independent project built on public
 data, not affiliated with OVHcloud.</p>{errors}
 </main></body></html>"""
 

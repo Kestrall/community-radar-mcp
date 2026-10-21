@@ -21,7 +21,7 @@ from .sources import FORUM, ISSUE_REPOS, ROADMAP_REPO, SUBREDDIT, Collector, Rat
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 INSTRUCTIONS = (
     "Community radar for OVHcloud Public Cloud: the official forum (community.ovhcloud.com), GitHub issues "
-    "(public roadmap, Terraform provider, ovhcloud-cli) and Reddit r/ovh, plus the official guides. "
+    "(public roadmap, Terraform provider, ovhcloud-cli), Reddit r/ovh when enabled, plus the official guides. "
     "Use community_pulse for metrics, find_irritants for pain points to report to product teams, "
     "unanswered_questions to triage, thread_context before drafting a reply, roadmap_status to check whether "
     "a request is already tracked, search_docs to point users to the right guide and content_gaps to find "
@@ -305,8 +305,8 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
         return (
             f"- Forum, Public Cloud category: {FORUM}/c/public-cloud/11\n"
             f"- Public roadmap: https://github.com/{ROADMAP_REPO}\n{repos}\n"
-            f"- Reddit: https://www.reddit.com/r/{SUBREDDIT}\n"
-            f"- Official guides: https://github.com/ovh/docs ({len(docs.guides)} Public Cloud guides indexed)\n"
+            + (f"- Reddit: https://www.reddit.com/r/{SUBREDDIT}\n" if collector.reddit_enabled else "")
+            + f"- Official guides: https://github.com/ovh/docs ({len(docs.guides)} Public Cloud guides indexed)\n"
         )
 
     @mcp.resource("radar://taxonomy", mime_type="text/markdown")

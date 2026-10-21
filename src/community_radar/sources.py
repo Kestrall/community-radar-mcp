@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import feedparser
 import httpx
 
 from .models import Thread
@@ -96,11 +95,13 @@ class Collector:
         self.client = client or httpx.AsyncClient(timeout=20, follow_redirects=True, headers=headers)
         self.cache = TTLCache(ttl)
         self.slow_cache = TTLCache(6 * 3600)  # the full roadmap changes slowly and costs ~10 GitHub calls
-        self.reddit_cache = TTLCache(3600)  # Reddit rate-limits anonymous RSS readers quickly
+        self.reddit_cache = TTLCache(3600)
         self.github_token = github_token if github_token is not None else os.getenv("GITHUB_TOKEN")
         self.forum_pages = forum_pages
         self.reddit_id = os.getenv("REDDIT_CLIENT_ID")
         self.reddit_secret = os.getenv("REDDIT_CLIENT_SECRET")
+        # Reddit requires approved API access (Responsible Builder Policy): the channel is off without credentials.
+        self.reddit_enabled = bool(self.reddit_id and self.reddit_secret)
         self.errors: dict[str, str] = {}
 
     # --- HTTP helpers -------------------------------------------------------------------------
@@ -243,39 +244,14 @@ class Collector:
         return await self.slow_cache.get("reddit-token", fetch)
 
     async def _reddit(self) -> list[Thread]:
-        """r/ovh newest posts: official API when REDDIT_CLIENT_ID/SECRET are set, public RSS feed otherwise."""
-        if self.reddit_id and self.reddit_secret:
-            response = await self.client.get(
-                f"https://oauth.reddit.com/r/{SUBREDDIT}/new",
-                params={"limit": 100, "raw_json": 1},
-                headers={"Authorization": f"Bearer {await self._reddit_token()}"},
-            )
-            response.raise_for_status()
-            return [self._reddit_post(child["data"]) for child in response.json()["data"]["children"]]
+        """r/ovh newest posts through the official API (needs approved REDDIT_CLIENT_ID/SECRET)."""
         response = await self.client.get(
-            f"https://www.reddit.com/r/{SUBREDDIT}/new/.rss", headers={"Accept": "application/rss+xml, */*;q=0.8"}
+            f"https://oauth.reddit.com/r/{SUBREDDIT}/new",
+            params={"limit": 100, "raw_json": 1},
+            headers={"Authorization": f"Bearer {await self._reddit_token()}"},
         )
         response.raise_for_status()
-        feed = feedparser.parse(response.text)
-        threads = []
-        for entry in feed.entries:
-            when = entry.get("published") or entry.get("updated")
-            threads.append(
-                classify(
-                    Thread(
-                        source="reddit",
-                        id=entry.get("id", entry.link),
-                        title=html.unescape(entry.title),
-                        url=entry.link,
-                        created=parse_date(when),
-                        last_activity=parse_date(entry.get("updated") or when),
-                        excerpt=html_to_text(entry.get("summary", ""))[:300],
-                        author=entry.get("author", "").removeprefix("/u/"),
-                        channel=f"r/{SUBREDDIT}",
-                    )
-                )
-            )
-        return threads
+        return [self._reddit_post(child["data"]) for child in response.json()["data"]["children"]]
 
     @staticmethod
     def _reddit_post(post: dict[str, Any]) -> Thread:
@@ -302,20 +278,24 @@ class Collector:
     # --- Public API ---------------------------------------------------------------------------
 
     async def threads(self, refresh: bool = False) -> list[Thread]:
-        """Recent community activity: forum, Terraform/CLI issues, roadmap updates and Reddit."""
+        """Recent community activity: forum, Terraform/CLI issues, roadmap updates and Reddit (when enabled)."""
         since = datetime.now(UTC) - timedelta(days=120)
 
         def guarded(name: str, fetch: Callable[[], Awaitable[list[Thread]]]) -> Awaitable[list[Thread]]:
             return self.cache.get(name, lambda: self._guarded(name, fetch), refresh, self._succeeded(name))
 
-        batches = await asyncio.gather(
+        fetches = [
             guarded("forum", self._forum),
-            self.reddit_cache.get(
-                "reddit", lambda: self._guarded("reddit", self._reddit), refresh, self._succeeded("reddit")
-            ),
             guarded("roadmap-recent", lambda: self._issues(ROADMAP_REPO, "roadmap", 2, since)),
             *(guarded(repo, lambda r=repo: self._issues(r, "github", 2, since)) for repo in ISSUE_REPOS),
-        )
+        ]
+        if self.reddit_enabled:
+            fetches.append(
+                self.reddit_cache.get(
+                    "reddit", lambda: self._guarded("reddit", self._reddit), refresh, self._succeeded("reddit")
+                )
+            )
+        batches = await asyncio.gather(*fetches)
         return [t for batch in batches for t in batch]
 
     async def roadmap(self, refresh: bool = False) -> list[Thread]:

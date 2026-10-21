@@ -38,6 +38,7 @@ class Pulse:
     answered_rate: float | None
     solved_rate: float | None
     median_first_response_hours: float | None
+    first_response_sample: int
     staff_reply_rate: float | None
     new_threads: int
     previous_new_threads: int
@@ -69,7 +70,8 @@ async def pulse(collector: Collector, threads: list[Thread], days: int, product:
         unanswered=sum(1 for t in known if not t.answered and not t.solved),
         answered_rate=round(sum(1 for t in known if t.answered) / len(known), 2) if known else None,
         solved_rate=round(sum(1 for t in questions if t.solved) / len(questions), 2) if questions else None,
-        median_first_response_hours=round(median(delays), 1) if delays else None,
+        median_first_response_hours=round(median(delays), 2) if delays else None,
+        first_response_sample=len(delays),
         staff_reply_rate=round(sum(answered_forum) / len(answered_forum), 2) if answered_forum else None,
         new_threads=len(new),
         previous_new_threads=len(previous),

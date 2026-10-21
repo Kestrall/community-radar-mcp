@@ -104,6 +104,7 @@ class PulseOut(BaseModel):
     answered_rate: float | None
     solved_rate: float | None
     forum_median_first_response_hours: float | None
+    forum_first_response_sample: int
     forum_staff_reply_rate: float | None
     most_engaging: list[ThreadOut]
     unavailable_sources: dict[str, str]
@@ -186,6 +187,7 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
             answered_rate=p.answered_rate,
             solved_rate=p.solved_rate,
             forum_median_first_response_hours=p.median_first_response_hours,
+            forum_first_response_sample=p.first_response_sample,
             forum_staff_reply_rate=p.staff_reply_rate,
             most_engaging=[ThreadOut.of(t) for t in p.top_threads],
             unavailable_sources=dict(collector.errors),

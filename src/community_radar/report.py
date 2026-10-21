@@ -56,6 +56,12 @@ def _trend(current: int, previous: int) -> str:
     return f"{'+' if delta >= 0 else ''}{delta}% vs previous period"
 
 
+def _delay(hours: float | None) -> str:
+    if hours is None:
+        return "–"
+    return f"{max(1, round(hours * 60))} min" if hours < 1 else f"{round(hours, 1)} h"
+
+
 def _pct(value: float | None) -> str:
     return "–" if value is None else f"{round(value * 100)}%"
 
@@ -118,9 +124,9 @@ def render_html(s: Snapshot) -> str:
         (p.unanswered, "without any reply", "forum & GitHub"),
         (_pct(p.answered_rate), "answered", "at least one reply"),
         (
-            "–" if p.median_first_response_hours is None else f"{p.median_first_response_hours} h",
+            _delay(p.median_first_response_hours),
             "median first response",
-            "forum",
+            f"forum, {p.first_response_sample} topics opened in the period",
         ),
         (_pct(p.solved_rate), "solved / closed", "forum & GitHub"),
     ]
@@ -206,8 +212,9 @@ def render_telegram(s: Snapshot) -> list[str]:
         f"• {p.total} active threads, {p.new_threads} new ({_trend(p.new_threads, p.previous_new_threads)})\n"
         f"• {p.unanswered} without reply · answered {_pct(p.answered_rate)} · solved {_pct(p.solved_rate)}\n"
         + (
-            f"• Forum median first response: {p.median_first_response_hours} h\n"
-            if p.median_first_response_hours
+            f"• Forum median first response: {_delay(p.median_first_response_hours)} "
+            f"({p.first_response_sample} new topics)\n"
+            if p.median_first_response_hours is not None
             else ""
         )
     )

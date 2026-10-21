@@ -108,4 +108,5 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 ## License
 
-MIT
+Code: MIT. The bundled guide index is derived from [ovh/docs](https://github.com/ovh/docs) and stays under
+CC BY-NC-SA 4.0, see [NOTICE.md](NOTICE.md).

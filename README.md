@@ -34,11 +34,32 @@ so the radar does not scrape it: the channel stays off until credentials are con
 | `community_pulse` | get the numbers: active and new threads, trend vs previous period, answered/solved rates, forum median first-response time, by channel and product |
 | `find_irritants` | rank products by pain (negative signals, engagement, growth) with example threads: the input for a product-team report |
 | `unanswered_questions` | triage what nobody answered yet, oldest and most viewed first |
+| `follow_ups` | find threads where OVHcloud owes the user a message, with the evidence and what to say (see below) |
 | `search_threads` | find what the community already said about a topic |
 | `roadmap_status` | answer "is this planned?" with matching roadmap items, their state and votes |
 | `search_docs` | point a user to the right official guide (English or French link) |
 | `content_gaps` | list community questions no guide clearly covers: tutorial and FAQ candidates |
-| `thread_context` | read a whole forum topic or GitHub issue (staff flagged) with related guides and roadmap items, before drafting a reply |
+| `thread_context` | read a whole forum topic or GitHub issue (staff flagged) with its follow-up status, related guides and roadmap items, before drafting a reply |
+
+### Follow-ups: beyond "unanswered"
+
+Counting comments is not enough. An issue can be assigned, put in a milestone and linked to a fix while the reporter
+still sees no human reply: the work is done, the communication is not. `follow_ups` reads each GitHub issue timeline
+(comments, labels, assignments, milestones, linked pull requests) and each forum conversation, then sorts threads
+by what the community team should do next:
+
+| Status | Meaning | What to do |
+|---|---|---|
+| `fixed_untold` | a linked fix was merged, the issue is open and nobody told the reporter | announce the fix and its release |
+| `silent_progress` | assigned, milestoned or linked to an open pull request, without a word to the reporter | post a status update |
+| `closed_silently` | closed by a maintainer with no linked fix and no comment | explain the closure |
+| `no_response` | no maintainer activity at all | reply or triage |
+| `triaged_silently` | labelled by maintainers, never answered by a human | acknowledge and say what happens next |
+| `waiting_on_us` | the user answered after our last message | follow up |
+| `community_answered` | forum topic answered by peers only, no solution marked | check the answer and mark it |
+
+Issues opened by maintainers (internal work items) are left out, and maintainers whose organisation membership is
+private (they comment as `CONTRIBUTOR`) are recognised by what they do on the issue: labelling, assigning, closing.
 
 Prompts: `weekly_report` (report for product managers), `draft_reply` (on-brand answer plus internal escalation
 notes, never posted automatically), `tutorial_from_gap`. Resources: `radar://sources`, `radar://taxonomy`.
@@ -50,7 +71,7 @@ stay grounded in links the server returns.
 
 ```sh
 pip install git+https://github.com/Kestrall/community-radar-mcp
-export GITHUB_TOKEN=...          # optional but recommended: a read-only token lifts GitHub's 60 requests/hour limit
+export GITHUB_TOKEN=...          # recommended: a classic token with no scope lifts GitHub's 60 requests/hour limit
 community-radar                  # MCP over stdio
 ```
 
@@ -90,7 +111,7 @@ From the shell: `community-radar report --days 7 -o radar.html`, `community-rada
 
 | Variable | Default | |
 |---|---|---|
-| `GITHUB_TOKEN` | – | read-only token (fine-grained, public repositories) |
+| `GITHUB_TOKEN` | – | classic token **without any scope** (public data, 5,000 requests/hour). Fine-grained tokens hide cross-references in issue timelines, so linked pull requests go unseen |
 | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | – | Reddit "script" app for the official API; the Reddit channel is off without them |
 | `RADAR_CACHE_TTL` | `900` | cache for community data, in seconds (the full roadmap is cached 6 h) |
 | `RADAR_DOCS_INDEX` | bundled | path to a guide index rebuilt with `community-radar build-docs` |

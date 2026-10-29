@@ -55,7 +55,8 @@ PRODUCTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     ),
     "ai": (
         "AI & Machine Learning",
-        r"ai endpoints?|ai deploy|ai training|ai notebooks?|\bllm|inference|\bmodels?\b|ovhai|machine learning"
+        r"ai endpoints?|ai deploy|ai training|ai notebooks?|\bllm|inference|\b(ai|llm|language|vision) models?\b"
+        r"|ovhai|machine learning"
         r"|\bml\b|qwen|llama|mistral|embedding",
         ("AI Deploy", "AI Endpoints", "AI Notebooks", "AI Training", "ML Serving", "Machine Learning Services"),
     ),
@@ -112,6 +113,11 @@ NEGATIVE = ("incident", "bug", "billing", "security")
 _LABEL_TO_PRODUCT = {label.lower(): key for key, (_, _, labels) in PRODUCTS.items() for label in labels}
 _PRODUCT_RE = {key: re.compile(pattern) for key, (_, pattern, _) in PRODUCTS.items()}
 _SIGNAL_RE = {key: re.compile(pattern) for key, pattern in SIGNALS.items()}
+# Issue templates print the provider source ("registry.terraform.io/ovh/ovh"): not a Container Registry topic.
+_NOISE = re.compile(r"registry\.(terraform\.io|opentofu\.org)\S*")
+# On GitHub the issue type (title prefix or label) is more reliable than words found in the template.
+_TYPE_BUG = re.compile(r"\[bug\]|^bug\b|type: bug|\bbug$")
+_TYPE_FEATURE = re.compile(r"\[feature|^feat(ure)?\b|type: feature|enhancement|feature request")
 
 
 def fold(text: str) -> str:
@@ -140,7 +146,7 @@ def resolve_product(name: str | None) -> str | None:
 
 def classify(thread: Thread) -> Thread:
     """Fill thread.products and thread.signals from its labels, title and excerpt."""
-    text = fold(thread.text)
+    text = _NOISE.sub(" ", fold(thread.text))
     products = [_LABEL_TO_PRODUCT[lbl.lower()] for lbl in thread.labels if lbl.lower() in _LABEL_TO_PRODUCT]
     products += [key for key, pattern in _PRODUCT_RE.items() if pattern.search(text)]
     thread.products = list(dict.fromkeys(products))
@@ -149,5 +155,14 @@ def classify(thread: Thread) -> Thread:
     signals = [key for key, pattern in _SIGNAL_RE.items() if pattern.search(signal_text)]
     if thread.source == "roadmap" and "feature_request" not in signals:
         signals.append("feature_request")
+    if thread.source == "github":
+        kind = [fold(thread.title)] + [fold(lbl) for lbl in thread.labels]
+        bug = any(_TYPE_BUG.search(k) for k in kind)
+        if any(_TYPE_FEATURE.search(k) for k in kind) and not bug:
+            signals = [s for s in signals if s != "bug"] + (
+                ["feature_request"] if "feature_request" not in signals else []
+            )
+        elif bug and "bug" not in signals:
+            signals.append("bug")
     thread.signals = signals
     return thread

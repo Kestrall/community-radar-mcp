@@ -10,6 +10,10 @@ from community_radar.sources import Collector, Post
 NOW = datetime.now(UTC)
 
 
+def iso(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def thread(source="forum", title="Question", days=1, **kw) -> Thread:
     created = NOW - timedelta(days=days)
     kw.setdefault("last_activity", created)
@@ -108,6 +112,46 @@ class FakeCollector(Collector):
         return "S3 503", [
             Post("alice", NOW - timedelta(days=2), "GET returns 503"),
             Post("ovh_staff", NOW - timedelta(days=1), "We are looking into it", True),
+        ]
+
+    async def issue_timeline(self, repo, number):
+        if number == 1:  # assigned, milestoned and linked to an open fix, but nobody told the reporter
+            return [
+                {"event": "labeled", "actor": {"login": "maintainer"}, "created_at": iso(NOW - timedelta(days=1))},
+                {
+                    "event": "assigned",
+                    "actor": {"login": "maintainer"},
+                    "assignee": {"login": "maintainer"},
+                    "created_at": iso(NOW - timedelta(hours=5)),
+                },
+                {
+                    "event": "milestoned",
+                    "actor": {"login": "maintainer"},
+                    "milestone": {"title": "v2.24"},
+                    "created_at": iso(NOW - timedelta(hours=5)),
+                },
+                {
+                    "event": "cross-referenced",
+                    "actor": {"login": "maintainer"},
+                    "created_at": iso(NOW),
+                    "source": {
+                        "issue": {
+                            "number": 1552,
+                            "title": "fix(kube): new kubeconfig",
+                            "state": "open",
+                            "html_url": "https://github.com/ovh/terraform-provider-ovh/pull/1552",
+                            "pull_request": {"merged_at": None},
+                        }
+                    },
+                },
+            ]
+        return [
+            {
+                "event": "commented",
+                "user": {"login": "maintainer"},
+                "author_association": "MEMBER",
+                "created_at": iso(NOW),
+            }
         ]
 
     async def issue_conversation(self, repo, number):

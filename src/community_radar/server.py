@@ -11,7 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
-from . import analytics
+from . import analytics, followup
 from .docs import DocsIndex
 from .models import Guide, Thread
 from .products import PRODUCTS, SIGNALS, label
@@ -23,7 +23,9 @@ INSTRUCTIONS = (
     "Community radar for OVHcloud Public Cloud: the official forum (community.ovhcloud.com), GitHub issues "
     "(public roadmap, Terraform provider, ovhcloud-cli), Reddit r/ovh when enabled, plus the official guides. "
     "Use community_pulse for metrics, find_irritants for pain points to report to product teams, "
-    "unanswered_questions to triage, thread_context before drafting a reply, roadmap_status to check whether "
+    "unanswered_questions to triage, follow_ups to find threads where OVHcloud owes the user a message (fix "
+    "merged or work in progress but nobody told the reporter, conversation waiting on us), thread_context "
+    "before drafting a reply, roadmap_status to check whether "
     "a request is already tracked, search_docs to point users to the right guide and content_gaps to find "
     "tutorial ideas. Always cite thread and guide URLs. Never claim something was posted: you only draft."
 )
@@ -143,8 +145,44 @@ class PostOut(BaseModel):
     text: str
 
 
+class PullRequestOut(BaseModel):
+    number: int
+    title: str
+    url: str
+    state: str
+
+
+class FollowUpOut(BaseModel):
+    thread: ThreadOut
+    status: str
+    status_label: str
+    reason: str
+    suggested_action: str
+    days_waiting: int
+    linked_pull_requests: list[PullRequestOut]
+    milestone: str | None
+    assignees: list[str]
+
+    @classmethod
+    def of(cls, f: followup.FollowUp) -> FollowUpOut:
+        return cls(
+            thread=ThreadOut.of(f.thread),
+            status=f.status,
+            status_label=f.label,
+            reason=f.reason,
+            suggested_action=f.action,
+            days_waiting=f.days_waiting(),
+            linked_pull_requests=[
+                PullRequestOut(number=p.number, title=p.title, url=p.url, state=p.state) for p in f.prs
+            ],
+            milestone=f.milestone,
+            assignees=f.assignees,
+        )
+
+
 class ContextOut(BaseModel):
     thread: ThreadOut
+    follow_up: FollowUpOut | None
     posts: list[PostOut]
     related_guides: list[GuideOut]
     related_roadmap: list[ThreadOut]
@@ -221,6 +259,22 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
         return [ThreadOut.of(t) for t in analytics.unanswered(threads, days, resolve_product(product))[: _cap(limit)]]
 
     @mcp.tool(annotations=READ_ONLY)
+    async def follow_ups(
+        days: int = 30, product: str | None = None, min_days: int = 2, limit: int = 10
+    ) -> list[FollowUpOut]:
+        """Threads where the next move belongs to OVHcloud, with the evidence and the message to send: fix merged
+        but the reporter was not told, work in progress (assigned, milestone, open pull request) without a word,
+        issue closed without explanation, no response, labelled but never answered, user waiting after our last
+        answer, forum topic answered by the community only. Reads GitHub issue timelines, not just comments.
+
+        min_days: ignore silences shorter than this (news such as a merged fix is always listed).
+        """
+        key = resolve_product(product)
+        threads = await collector.threads()
+        found = await followup.follow_ups(collector, threads, days, key, max(0, min_days))
+        return [FollowUpOut.of(f) for f in found[: _cap(limit)]]
+
+    @mcp.tool(annotations=READ_ONLY)
     async def search_threads(
         query: str, days: int = 180, source: str | None = None, limit: int = 10
     ) -> list[ThreadOut]:
@@ -275,24 +329,33 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
     @mcp.tool(annotations=READ_ONLY)
     async def thread_context(url: str) -> ContextOut:
         """Everything needed to draft a reply to a forum topic or GitHub issue: the full conversation (who is
-        staff), the closest official guides and related roadmap items. Drafting only: nothing is posted."""
+        staff), the follow-up status (linked pull requests, milestone, what the user is waiting for), the closest
+        official guides and related roadmap items. Drafting only: nothing is posted."""
+        now = datetime.now(UTC)
         if forum := re.search(r"community\.ovhcloud\.com/t/(?:[^/]+/)?(\d+)", url):
             title, posts = await collector.forum_topic(forum.group(1))
             known = {t.id: t for t in await collector.threads() if t.source == "forum"}
             thread = known.get(forum.group(1)) or Thread(
                 "forum", forum.group(1), title, url, posts[0].created, posts[-1].created, posts[0].text[:300]
             )
+            status = followup.assess_forum(thread, posts, now, min_days=0)
         elif issue := re.search(r"github\.com/([^/]+/[^/]+)/issues/(\d+)", url):
             try:
                 thread, posts = await collector.issue_conversation(issue.group(1), int(issue.group(2)))
+                events = await collector.issue_timeline(issue.group(1), int(issue.group(2)))
             except (RateLimited, httpx.HTTPStatusError) as exc:
                 raise ToolError(f"Could not read this issue: {exc}") from exc
+            status = followup.assess_issue(thread, events, now, min_days=0)
+            staff = followup.maintainers(events, thread.author)
+            for p in posts[1:]:
+                p.staff = p.staff or p.author in staff
         else:
             raise ToolError("Supported URLs: community.ovhcloud.com/t/... and github.com/<owner>/<repo>/issues/<n>")
         related_docs = docs.search(f"{thread.title} {thread.excerpt[:120]}", 3)
         related_roadmap = analytics.search_threads(await collector.roadmap(), thread.title)[:3]
         return ContextOut(
             thread=ThreadOut.of(thread),
+            follow_up=FollowUpOut.of(status) if status else None,
             posts=[PostOut(author=p.author, date=p.created, staff=p.staff, text=p.text[:1500]) for p in posts[:20]],
             related_guides=[GuideOut.of(g, s) for g, s in related_docs],
             related_roadmap=[ThreadOut.of(t) for t in related_roadmap if t.url != thread.url],
@@ -320,11 +383,12 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
         """Weekly community report for Public Cloud product managers."""
         return (
             f"Build the weekly OVHcloud Public Cloud community report for the last {days} days. "
-            f"Call community_pulse(days={days}), find_irritants(days={days}), unanswered_questions(days={days}) "
+            f"Call community_pulse(days={days}), find_irritants(days={days}), follow_ups(days={max(days, 30)}) "
             f"and content_gaps(days={max(days, 30)}). Then write, in English, a concise report for product "
             "managers: 1) headline numbers with the trend versus the previous period, 2) top 3 irritants with "
             "user quotes or thread titles and links, and what you recommend to each product team, "
-            "3) questions waiting for an answer, 4) two tutorial or FAQ ideas. Cite every thread URL."
+            "3) threads where we owe the user a message (fixes nobody announced, silent work, no response), "
+            "4) two tutorial or FAQ ideas. Cite every thread URL."
         )
 
     @mcp.prompt()
@@ -332,8 +396,11 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
         """Draft a helpful, on-brand reply to a community thread."""
         return (
             f"Call thread_context(url={url!r}). Draft a reply in {language} as an OVHcloud Tech Community "
-            "Manager: thank the user, restate the problem in one sentence, give concrete steps (commands, console "
-            "paths, Terraform or CLI snippets) grounded in the related guides, link the guides, mention a "
+            "Manager. If thread_context returns a follow_up, the reply must do what it calls for: announce a merged "
+            "fix and its release, give a status update on work in progress (link the pull request and milestone), "
+            "or explain a closure. Otherwise: thank the user, restate the problem in one sentence, give concrete "
+            "steps (commands, console paths, Terraform or CLI snippets) grounded in the related guides, link the "
+            "guides, mention a "
             "related roadmap item if any, and ask for the missing details needed to reproduce. Stay factual: if "
             "the guides do not cover it, say you are checking with the product team. Then list, separately, "
             "what should be escalated internally (Support, Product or Engineering) and why. Do not post anything."

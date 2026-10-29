@@ -25,6 +25,7 @@ class Thread:
     solved: bool = False  # accepted answer on the forum, closed issue on GitHub
     labels: list[str] = field(default_factory=list)
     channel: str = ""  # e.g. "ovh/terraform-provider-ovh", "r/ovh"
+    staff_author: bool = False  # opened by a maintainer (internal work item, not a community question)
     products: list[str] = field(default_factory=list)
     signals: list[str] = field(default_factory=list)
 

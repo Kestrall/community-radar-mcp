@@ -24,6 +24,7 @@ async def test_lists_tools_prompts_and_resources(collector, docs):
         "community_pulse",
         "find_irritants",
         "unanswered_questions",
+        "follow_ups",
         "search_threads",
         "roadmap_status",
         "search_docs",
@@ -52,6 +53,9 @@ async def test_tools_return_structured_results(collector, docs):
         guides = (await call(client, "search_docs", query="security group", lang="fr"))["result"]
         assert guides[0]["url"].startswith("https://help.ovhcloud.com/csm/fr-")
         assert (await call(client, "content_gaps"))["result"]
+        moves = (await call(client, "follow_ups", min_days=0))["result"]
+        assert moves[0]["status"] == "silent_progress" and moves[0]["linked_pull_requests"][0]["number"] == 1552
+        assert moves[0]["suggested_action"].startswith("Post a status update")
 
 
 async def test_thread_context_for_forum_and_github(collector, docs):
@@ -61,6 +65,8 @@ async def test_thread_context_for_forum_and_github(collector, docs):
         assert forum["related_guides"][0]["title"] == "Getting started with Object Storage"
         issue = await call(client, "thread_context", url="https://github.com/ovh/ovhcloud-cli/issues/300")
         assert issue["thread"]["channel"] == "ovh/ovhcloud-cli" and issue["posts"][1]["staff"]
+        assert issue["follow_up"] is None  # a maintainer answered last
+        assert forum["follow_up"] is None
 
 
 async def test_errors_are_readable(collector, docs):

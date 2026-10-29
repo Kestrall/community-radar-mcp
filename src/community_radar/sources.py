@@ -22,6 +22,7 @@ FORUM = "https://community.ovhcloud.com"
 FORUM_CATEGORY = "public-cloud/11"
 ROADMAP_REPO = "ovh/public-cloud-roadmap"
 ISSUE_REPOS = ("ovh/terraform-provider-ovh", "ovh/ovhcloud-cli")
+STAFF_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 SUBREDDIT = "ovh"
 
 
@@ -212,6 +213,7 @@ class Collector:
                 solved=issue.get("state") == "closed",
                 labels=[lbl["name"] for lbl in issue.get("labels", [])],
                 channel=repo,
+                staff_author=issue.get("author_association") in STAFF_ASSOCIATIONS,
             )
         )
 
@@ -319,7 +321,14 @@ class Collector:
                 author=c["user"]["login"],
                 created=parse_date(c["created_at"]),
                 text=c.get("body") or "",
-                staff=c.get("author_association") in ("OWNER", "MEMBER", "COLLABORATOR"),
+                staff=c.get("author_association") in STAFF_ASSOCIATIONS,
             )
             for c in comments
         ]
+
+    async def issue_timeline(self, repo: str, number: int) -> list[dict[str, Any]]:
+        """Timeline events of a GitHub issue: comments, labels, assignments, milestones, linked pull requests."""
+        return await self.cache.get(
+            f"timeline:{repo}#{number}",
+            lambda: self._json(f"https://api.github.com/repos/{repo}/issues/{number}/timeline", per_page=100),
+        )

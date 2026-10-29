@@ -177,3 +177,14 @@ async def test_cache_reuses_results():
     assert await cache.get("x", fetch, keep=lambda v: False) == 3
     assert await cache.get("x", fetch) == 4  # a rejected value is not cached
     _ = httpx  # keep import for respx side effects
+
+
+@respx.mock
+async def test_issue_timeline_and_maintainer_authored_issues():
+    route = respx.get(url__regex=r".*/issues/1292/timeline.*").respond(json=[{"event": "labeled"}])
+    collector = Collector(github_token="t")
+    assert await collector.issue_timeline("ovh/terraform-provider-ovh", 1292) == [{"event": "labeled"}]
+    await collector.issue_timeline("ovh/terraform-provider-ovh", 1292)
+    assert route.call_count == 1  # cached
+    epic = collector._issue({**ISSUE, "author_association": "MEMBER"}, "ovh/ovhcloud-cli", "github")
+    assert epic.staff_author and not collector._issue(ISSUE, "ovh/ovhcloud-cli", "github").staff_author

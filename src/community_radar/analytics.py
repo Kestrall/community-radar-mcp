@@ -51,8 +51,8 @@ async def pulse(collector: Collector, threads: list[Thread], days: int, product:
     # anything active then and active again since only counts in the current one.
     new = by_product(window(threads, days, new_only=True), product)
     previous = by_product(window(threads, days, datetime.now(UTC) - timedelta(days=days), new_only=True), product)
-    # Roadmap items are wishes, not questions: they do not count in answer metrics.
-    known = [t for t in current if t.answered is not None and t.source != "roadmap"]
+    # Roadmap items are wishes and maintainer-opened issues are internal work: neither counts in answer metrics.
+    known = [t for t in current if t.answered is not None and t.source != "roadmap" and not t.staff_author]
     # First response time only makes sense for topics opened in the period, not for old topics revived by a reply.
     forum = [t for t in new if t.source == "forum"]
     responses = await asyncio.gather(*(collector.first_response(t) for t in forum))
@@ -85,7 +85,7 @@ def unanswered(threads: list[Thread], days: int, product: str | None) -> list[Th
     pending = [
         t
         for t in by_product(window(threads, days), product)
-        if t.source in ("forum", "github") and t.answered is False and not t.solved
+        if t.source in ("forum", "github") and t.answered is False and not t.solved and not t.staff_author
     ]
     return sorted(pending, key=lambda t: -((now - t.created).total_seconds() / 3600 * (1 + t.views / 50)))
 

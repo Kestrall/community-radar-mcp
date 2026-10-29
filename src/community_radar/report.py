@@ -6,10 +6,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
 
-from . import analytics
+from . import analytics, followup
 from .docs import DocsIndex
 from .models import Thread
-from .products import label
 from .sources import Collector
 
 SIGNAL_LABELS = {
@@ -28,7 +27,7 @@ class Snapshot:
     generated: datetime
     pulse: analytics.Pulse
     irritants: list[analytics.Irritant]
-    unanswered: list[Thread]
+    follow_ups: list[followup.FollowUp]
     gaps: list[analytics.Gap]
     top_requests: list[Thread]
     errors: dict[str, str]
@@ -43,7 +42,7 @@ async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7) -> Snap
         generated=datetime.now(UTC),
         pulse=await analytics.pulse(collector, threads, days, None),
         irritants=analytics.irritants(threads, days, 5),
-        unanswered=analytics.unanswered(threads, max(days, 30), None)[:8],
+        follow_ups=(await followup.follow_ups(collector, threads, max(days, 30)))[:10],
         gaps=analytics.content_gaps(threads, docs, max(days, 30), 6),
         top_requests=sorted(requests, key=lambda t: -t.reactions)[:6],
         errors=dict(collector.errors),
@@ -98,7 +97,9 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 background:var(--accent-soft);color:var(--accent);white-space:nowrap}
 .badge.incident,.badge.security{background:var(--bad-soft);color:var(--bad)}
 .badge.bug,.badge.billing{background:var(--warn-soft);color:var(--warn)}
-.badge.ok{background:var(--good-soft);color:var(--good)}
+.badge.ok,.badge.fixed_untold{background:var(--good-soft);color:var(--good)}
+.badge.no_response,.badge.closed_silently{background:var(--bad-soft);color:var(--bad)}
+.badge.silent_progress,.badge.triaged_silently,.badge.waiting_on_us{background:var(--warn-soft);color:var(--warn)}
 .score{float:right;font-size:12px;color:var(--muted)}
 table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;
 overflow:hidden}td,th{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:14px;
@@ -153,13 +154,15 @@ def render_html(s: Snapshot) -> str:
         for i in s.irritants
     )
     now = s.generated
-    unanswered = (
+    follow_ups = (
         "".join(
-            f"<tr><td>{_link(t)}{_badges(t)}</td><td>{SOURCE_NAMES.get(t.source, t.source)}</td>"
-            f"<td>{(now - t.created).days} d</td><td>{', '.join(label(x) for x in t.products[:2]) or '–'}</td></tr>"
-            for t in s.unanswered
+            f"<tr><td>{_link(f.thread)} <span class=muted>· {SOURCE_NAMES.get(f.thread.source, f.thread.source)}"
+            f"</span><br><span class=muted>{escape(f.reason)}</span></td>"
+            f'<td><span class="badge {f.status}">{escape(f.label)}</span></td><td>{escape(f.action)}</td>'
+            f"<td>{f.days_waiting(now)} d</td></tr>"
+            for f in s.follow_ups
         )
-        or "<tr><td colspan=4 class=muted>Every recent thread got at least one reply.</td></tr>"
+        or "<tr><td colspan=4 class=muted>Nobody is waiting for us: every recent thread got its answer.</td></tr>"
     )
     gaps = (
         "".join(
@@ -191,7 +194,10 @@ def render_html(s: Snapshot) -> str:
 <section class=kpis>{kpi_html}</section>
 <h2>Where the conversation is</h2><div class="card bars">{bars or "<span class=muted>No activity.</span>"}</div>
 <h2>Top irritants to bring to product teams</h2><div class=grid>{irritants}</div>
-<h2>Waiting for an answer</h2><table><tr><th>Thread</th><th>Channel</th><th>Age</th><th>Product</th></tr>{unanswered}</table>
+<h2>Next moves for the community team</h2>
+<p class=muted>Threads where OVHcloud owes the user a message, read from the full GitHub timeline (assignments,
+milestones, linked pull requests), not only from comments.</p>
+<table><tr><th>Thread</th><th>Status</th><th>What to do</th><th>Waiting</th></tr>{follow_ups}</table>
 <h2>Content gaps: tutorial ideas</h2>
 <table><tr><th>Community question</th><th>Closest official guide (match score)</th></tr>{gaps}</table>
 <h2>Most wanted on the roadmap</h2>
@@ -225,11 +231,13 @@ def render_telegram(s: Snapshot) -> list[str]:
         + "\n".join(f'   ▸ <a href="{e(t.url)}">{e(t.title[:90])}</a>' for t in i.examples[:3])
         for i in s.irritants[:3]
     )
-    waiting = "\n".join(f'▸ <a href="{e(t.url)}">{e(t.title[:90])}</a>' for t in s.unanswered[:5])
+    waiting = "\n".join(
+        f'▸ <a href="{e(f.thread.url)}">{e(f.thread.title[:80])}</a> · <i>{e(f.label)}</i>' for f in s.follow_ups[:5]
+    )
     gaps = "\n".join(f'▸ <a href="{e(g.thread.url)}">{e(g.thread.title[:90])}</a>' for g in s.gaps[:3])
     parts = [head, "<b>Top irritants</b>" + irritants]
     if waiting:
-        parts.append(f"⏳ <b>Waiting for an answer</b>\n{waiting}")
+        parts.append(f"⏳ <b>Next moves</b>\n{waiting}")
     if gaps:
         parts.append(f"📝 <b>Tutorial ideas</b>\n{gaps}")
     if s.errors:

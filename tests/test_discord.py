@@ -8,7 +8,7 @@ from community_radar import followup
 from community_radar.discord_source import API, DiscordSource, snowflake_time, time_snowflake
 from community_radar.sources import Collector
 
-GUILD = "900"
+GUILD = "123456789012345678"
 NOW = datetime.now(UTC)
 
 

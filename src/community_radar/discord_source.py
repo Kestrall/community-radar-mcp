@@ -29,7 +29,7 @@ TEXT, ANNOUNCEMENT, FORUM, MEDIA = 0, 5, 15, 16
 PUBLIC_THREAD = 11
 # Plain messages and replies; joins, pins and other system messages are ignored.
 MESSAGE_TYPES = (0, 19)
-DEFAULT_STAFF_ROLES = r"staff|team|ovhcloud|admin|modo|moderat"
+DEFAULT_STAFF_ROLES = r"staff|team|admin|modo|moderat|employee"
 SOLVED_TAGS = re.compile(r"solved|r[ée]solu|resolved|fixed|answered|r[ée]pondu", re.IGNORECASE)
 # A text-channel message is a question worth tracking when it is long enough or asks something.
 MIN_QUESTION_CHARS = 40
@@ -71,6 +71,7 @@ class DiscordSource:
         channels: str | None = None,
         demo: bool | None = None,
         label: str = "",
+        staff_roles: str | None = None,
     ) -> None:
         self.client = client
         self.token = token if token is not None else os.getenv("DISCORD_BOT_TOKEN", "")
@@ -78,7 +79,9 @@ class DiscordSource:
         self.label = label
         wanted = channels if channels is not None else os.getenv("DISCORD_CHANNELS", "")
         self.channel_filter = {c.strip().lstrip("#").lower() for c in wanted.split(",") if c.strip()}
-        self.staff_pattern = re.compile(os.getenv("DISCORD_STAFF_ROLES") or DEFAULT_STAFF_ROLES, re.IGNORECASE)
+        self.staff_pattern = re.compile(
+            os.getenv("DISCORD_STAFF_ROLES") or staff_roles or DEFAULT_STAFF_ROLES, re.IGNORECASE
+        )
         self.pages = int(os.getenv("DISCORD_PAGES", "5"))
         # Webhook posts are usually feeds (releases, alerts); a demo server can use them to play several members.
         self.include_webhooks = os.getenv("DISCORD_INCLUDE_WEBHOOKS", "").lower() in ("1", "true", "yes")

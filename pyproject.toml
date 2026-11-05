@@ -1,7 +1,7 @@
 [project]
 name = "community-radar-mcp"
 version = "0.1.0"
-description = "MCP server and dashboard that turn the OVHcloud Public Cloud community (forum, GitHub, Discord, Reddit) into triage, irritant reports and tutorial ideas"
+description = "Neutral community radar (MCP server and dashboard): forums, GitHub, Discord, Reddit and feeds turned into triage, irritant reports and tutorial ideas, with an OVHcloud Public Cloud profile"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

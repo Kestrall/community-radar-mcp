@@ -1,4 +1,4 @@
-"""MCP server: OVHcloud Public Cloud community radar."""
+"""MCP server: a community radar (forums, GitHub, Discord, Reddit, feeds) for an AI assistant."""
 
 from __future__ import annotations
 
@@ -14,20 +14,20 @@ from pydantic import BaseModel
 from . import analytics, followup, triage
 from .docs import DocsIndex
 from .models import Guide, Thread
-from .products import PRODUCTS, SIGNALS, label
+from .products import SIGNALS, label, taxonomy
 from .products import resolve_product as _resolve_product
 from .queue_page import find_thread, load_queue
-from .sources import FORUM, Collector, RateLimited
+from .sources import Collector, RateLimited
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 # Writes to the radar's own triage store only: nothing is posted on the community platforms.
 TRIAGE_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 INSTRUCTIONS = (
-    "Community radar for OVHcloud Public Cloud: the official forum (community.ovhcloud.com), GitHub issues "
-    "(public roadmap, Terraform provider, ovhcloud-cli), Reddit r/ovh and the Discord server when enabled, plus "
-    "the official guides. "
+    "Community radar: the forums, GitHub repositories, public roadmap, Discord servers, subreddits and feeds "
+    "configured on its Sources page (read radar://sources for the list and the community it covers), plus the "
+    "official guides when the profile ships them. "
     "Use community_pulse for metrics, find_irritants for pain points to report to product teams, "
-    "unanswered_questions to triage, follow_ups to find threads where OVHcloud owes the user a message (fix "
+    "unanswered_questions to triage, follow_ups to find threads where the team owes the user a message (fix "
     "merged or work in progress but nobody told the reporter, conversation waiting on us), thread_context "
     "before drafting a reply, roadmap_status to check whether "
     "a request is already tracked, search_docs to point users to the right guide and content_gaps to find "
@@ -307,7 +307,7 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
     async def follow_ups(
         days: int = 30, product: str | None = None, min_days: int = 2, limit: int = 10
     ) -> list[FollowUpOut]:
-        """Threads where the next move belongs to OVHcloud, with the evidence and the message to send: fix merged
+        """Threads where the next move belongs to the team, with the evidence and the message to send: fix merged
         but the reporter was not told, work in progress (assigned, milestone, open pull request) without a word,
         issue closed without explanation, no response, labelled but never answered, user waiting after our last
         answer, forum topic answered by the community only. Reads GitHub issue timelines, not just comments.
@@ -334,8 +334,10 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
 
     @mcp.tool(annotations=READ_ONLY)
     async def roadmap_status(query: str, limit: int = 8) -> RoadmapOut:
-        """Is a feature already on the public roadmap (github.com/ovh/public-cloud-roadmap)? Returns matching items
-        with their state, labels and community votes (👍)."""
+        """Is a feature already on the public roadmap (the GitHub repository set on the Sources page)? Returns
+        matching items with their state, labels and community votes (👍)."""
+        if not collector.config.roadmap:
+            raise ToolError("No public roadmap is configured for this community (Sources page).")
         roadmap = await collector.roadmap()
         if not roadmap and "roadmap" in collector.errors:
             raise ToolError(f"Roadmap unavailable: {collector.errors['roadmap']}")
@@ -350,17 +352,28 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
 
     @mcp.tool(annotations=READ_ONLY)
     def search_docs(query: str, lang: str = "en", section: str | None = None, limit: int = 5) -> list[GuideOut]:
-        """Find official OVHcloud Public Cloud guides for a question. lang: en or fr (link language).
+        """Find official guides for a question, when the profile ships a documentation index (the OVHcloud Public
+        Cloud profile indexes ~500 guides). lang: en or fr (link language).
 
         section: optional guide folder, e.g. containers_orchestration, storage_and_backup, compute, network,
         ai_machine_learning, public_cloud_databases.
         """
-        return [GuideOut.of(g, s, lang) for g, s in docs.search(query, _cap(limit, 20), section)]
+        guides = collector.guides(docs)
+        if not guides.guides:
+            raise ToolError(
+                "No documentation index for this community: set RADAR_DOCS_INDEX or use a profile with one."
+            )
+        return [GuideOut.of(g, s, lang) for g, s in guides.search(query, _cap(limit, 20), section)]
 
     @mcp.tool(annotations=READ_ONLY)
     async def content_gaps(days: int = 60, limit: int = 8) -> list[GapOut]:
         """Community questions that no official guide clearly covers (weak documentation match): candidates for
-        new tutorials, FAQ entries or doc fixes."""
+        new tutorials, FAQ entries or doc fixes. Needs a documentation index (see search_docs)."""
+        guides = collector.guides(docs)
+        if not guides.guides:
+            raise ToolError(
+                "No documentation index for this community: set RADAR_DOCS_INDEX or use a profile with one."
+            )
         threads = await collector.threads()
         return [
             GapOut(
@@ -368,7 +381,7 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
                 closest_guide=GuideOut.of(g.best_guide, g.best_score) if g.best_guide else None,
                 match_score=g.best_score,
             )
-            for g in analytics.content_gaps(threads, docs, days, _cap(limit, 20))
+            for g in analytics.content_gaps(threads, guides, days, _cap(limit, 20))
         ]
 
     @mcp.tool(annotations=READ_ONLY)
@@ -378,11 +391,14 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
         staff), the follow-up status (linked pull requests, milestone, what the user is waiting for), the closest
         official guides and related roadmap items. Drafting only: nothing is posted."""
         now = datetime.now(UTC)
-        if forum := re.search(r"community\.ovhcloud\.com/t/(?:[^/]+/)?(\d+)", url):
-            title, posts = await collector.forum_topic(forum.group(1))
-            known = {t.id: t for t in await collector.threads() if t.source == "forum"}
-            thread = known.get(forum.group(1)) or Thread(
-                "forum", forum.group(1), title, url, posts[0].created, posts[-1].created, posts[0].text[:300]
+        if forum := collector.forum_topic_ref(url):
+            try:
+                title, posts = await collector.forum_topic(url)
+            except httpx.HTTPError as exc:
+                raise ToolError(f"Could not read this forum topic: {exc}") from exc
+            known = {t.url.split("?")[0]: t for t in await collector.threads() if t.source == "forum"}
+            thread = known.get(url.split("?")[0]) or Thread(
+                "forum", forum[1], title, url, posts[0].created, posts[-1].created, posts[0].text[:300]
             )
             status = followup.assess_forum(thread, posts, now, min_days=0)
         elif issue := re.search(r"github\.com/([^/]+/[^/]+)/issues/(\d+)", url):
@@ -417,10 +433,10 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
             status = followup.assess_forum(thread, posts, now, min_days=0)
         else:
             raise ToolError(
-                "Supported URLs: community.ovhcloud.com/t/..., github.com/<owner>/<repo>/issues/<n> and "
+                "Supported URLs: Discourse topics (<forum>/t/<slug>/<id>), github.com/<owner>/<repo>/issues/<n> and "
                 "discord.com/channels/<server>/<channel>[/<message>]"
             )
-        related_docs = docs.search(f"{thread.title} {thread.excerpt[:120]}", 3)
+        related_docs = collector.guides(docs).search(f"{thread.title} {thread.excerpt[:120]}", 3)
         related_roadmap = analytics.search_threads(await collector.roadmap(), thread.title)[:3]
         return ContextOut(
             thread=ThreadOut.of(thread),
@@ -504,8 +520,13 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
         """Channels watched by the radar."""
         repos = "\n".join(f"- GitHub issues: https://github.com/{r}" for r in collector.config.repos())
         return (
-            f"- Forum, Public Cloud category: {FORUM}/c/public-cloud/11\n"
-            f"- Public roadmap: https://github.com/{collector.config.roadmap}\n{repos}\n"
+            f"Community: {collector.profile.name or 'not specified (neutral profile)'}\n\n"
+            + "".join(
+                f"- Forum « {f['label']} »: {f['url']}{'/c/' + f['category'] if f['category'] else ''}\n"
+                for f in collector.config.enabled_forums()
+            )
+            + (f"- Public roadmap: https://github.com/{collector.config.roadmap}\n" if collector.config.roadmap else "")
+            + f"{repos}\n"
             + "".join(
                 f"- Reddit: https://www.reddit.com/r/{r}\n"
                 for r in collector.config.subreddits()
@@ -523,20 +544,27 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
                 for source, channel in collector.inbox.channels()
                 if collector.config.allows_import(source, channel)
             )
-            + f"- Official guides: https://github.com/ovh/docs ({len(docs.guides)} Public Cloud guides indexed)\n"
+            + (
+                f"- Official guides: {len(collector.guides(docs).guides)} guides indexed\n"
+                if collector.guides(docs).guides
+                else ""
+            )
         )
 
     @mcp.resource("radar://taxonomy", mime_type="text/markdown")
     def taxonomy_resource() -> str:
         """Products and signals used to classify threads."""
-        products = "\n".join(f"- `{k}`: {v[0]}" for k, v in PRODUCTS.items())
+        products = "\n".join(f"- `{k}`: {v[0]}" for k, v in taxonomy().products.items()) or (
+            "No product taxonomy (neutral profile): platform tags and labels are used as topics."
+        )
         return f"## Products\n{products}\n\n## Signals\n" + "\n".join(f"- `{s}`" for s in SIGNALS)
 
     @mcp.prompt()
     def weekly_report(days: int = 7) -> str:
-        """Weekly community report for Public Cloud product managers."""
+        """Weekly community report for product managers."""
+        community = f"{collector.profile.name} community" if collector.profile.name else "community"
         return (
-            f"Build the weekly OVHcloud Public Cloud community report for the last {days} days. "
+            f"Build the weekly {community} report for the last {days} days. "
             f"Call community_pulse(days={days}), find_irritants(days={days}), follow_ups(days={max(days, 30)}) "
             f"and content_gaps(days={max(days, 30)}). Then write, in English, a concise report for product "
             "managers: 1) headline numbers with the trend versus the previous period, 2) top 3 irritants with "
@@ -549,8 +577,8 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
     def draft_reply(url: str, language: str = "same as the user") -> str:
         """Draft a helpful, on-brand reply to a community thread."""
         return (
-            f"Call thread_context(url={url!r}). Draft a reply in {language} as an OVHcloud Tech Community "
-            "Manager. If thread_context returns a follow_up, the reply must do what it calls for: announce a merged "
+            f"Call thread_context(url={url!r}). Draft a reply in {language} as {collector.profile.team_role}. "
+            "If thread_context returns a follow_up, the reply must do what it calls for: announce a merged "
             "fix and its release, give a status update on work in progress (link the pull request and milestone), "
             "or explain a closure. Otherwise: thank the user, restate the problem in one sentence, give concrete "
             "steps (commands, console paths, Terraform or CLI snippets) grounded in the related guides, link the "

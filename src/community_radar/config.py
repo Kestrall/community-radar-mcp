@@ -1,7 +1,9 @@
-"""Watched sources, editable from the Sources page: GitHub repositories, Discord servers, subreddits and feeds.
+"""Watched sources, editable from the Sources page: profile, forums, roadmap, GitHub repositories, Discord servers,
+subreddits and feeds.
 
 Secrets never live here: GITHUB_TOKEN, DISCORD_BOT_TOKEN, Reddit credentials and RADAR_INGEST_TOKEN stay in the
-environment. Without a saved configuration, the defaults come from the environment and the built-in list.
+environment. Without a saved configuration, the defaults come from the environment: RADAR_PROFILE picks a profile
+whose preset sources are loaded (nothing for the neutral default), DISCORD_GUILD_ID adds a Discord server.
 """
 
 from __future__ import annotations
@@ -14,15 +16,14 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-DEFAULT_ROADMAP = "ovh/public-cloud-roadmap"
-DEFAULT_REPOS = ("ovh/terraform-provider-ovh", "ovh/ovhcloud-cli")
-DEFAULT_SUBREDDITS = ("ovh",)
 LIMIT = 20  # per kind: keeps GitHub and Discord calls reasonable
 
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}")
 GUILD_RE = re.compile(r"\d{15,21}")
 SUBREDDIT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_]{1,20}")
 CHANNELS_RE = re.compile(r"[\w#, -]{0,300}")
+CATEGORY_RE = re.compile(r"[\w./-]{0,100}")
+KINDS = ("forums", "github", "discord", "reddit", "feeds")
 
 
 def _flag(value: Any, default: bool = True) -> bool:
@@ -35,7 +36,9 @@ def _text(value: Any, limit: int) -> str:
 
 @dataclass
 class SourceConfig:
-    roadmap: str = DEFAULT_ROADMAP
+    profile: str = "auto"  # "auto" (detected from the sources) or a key of profiles.PROFILES
+    roadmap: str = ""  # owner/repo whose issues are the public roadmap (optional)
+    forums: list[dict[str, Any]] = field(default_factory=list)  # Discourse: {"url", "category", "label", "enabled"}
     github: list[dict[str, Any]] = field(default_factory=list)  # {"repo", "enabled"}
     discord: list[dict[str, Any]] = field(default_factory=list)  # {"guild", "label", "channels", "demo", "enabled"}
     reddit: list[dict[str, Any]] = field(default_factory=list)  # {"subreddit", "enabled"}
@@ -57,22 +60,27 @@ class SourceConfig:
             if guild
             else []
         )
-        return cls(
-            github=[{"repo": r, "enabled": True} for r in DEFAULT_REPOS],
-            discord=discord,
-            reddit=[{"subreddit": s, "enabled": True} for s in DEFAULT_SUBREDDITS],
-        )
+        from .profiles import PROFILES
+
+        profile = os.getenv("RADAR_PROFILE", "auto")
+        preset = PROFILES[profile].preset if profile in PROFILES else {}
+        return cls.parse({**preset, "profile": profile if profile in PROFILES else "auto", "discord": discord})
 
     @classmethod
     def parse(cls, data: Any) -> SourceConfig:
         """Validate a configuration sent by the Sources page. Raises ValueError with a readable message."""
         if not isinstance(data, dict):
             raise ValueError("JSON object expected")
-        roadmap = _text(data.get("roadmap"), 140) or DEFAULT_ROADMAP
-        if not REPO_RE.fullmatch(roadmap):
+        from .profiles import PROFILES, detect
+
+        profile = _text(data.get("profile"), 20) or "auto"
+        if profile != "auto" and profile not in PROFILES:
+            raise ValueError(f"profile must be auto or one of: {', '.join(PROFILES)}")
+        roadmap = _text(data.get("roadmap"), 140).removeprefix("https://github.com/").strip("/")
+        if roadmap and not REPO_RE.fullmatch(roadmap):
             raise ValueError(f"roadmap: {roadmap!r} is not an owner/repo name")
-        config = cls(roadmap=roadmap)
-        for kind in ("github", "discord", "reddit", "feeds"):
+        config = cls(profile=profile, roadmap=roadmap)
+        for kind in KINDS:
             items = data.get(kind, [])
             if not isinstance(items, list) or len(items) > LIMIT:
                 raise ValueError(f"{kind}: list of at most {LIMIT} entries expected")
@@ -86,7 +94,24 @@ class SourceConfig:
                     raise ValueError(f"{kind} #{n + 1}: {key} is listed twice")
                 seen.add(key)
                 getattr(config, kind).append(entry)
+        if "forums" not in data:  # saved before forums were configurable: they were the detected profile's own
+            config.forums = [cls._forums(f, "preset forum") for f in detect(config).preset.get("forums", [])]
         return config
+
+    @staticmethod
+    def _forums(item: dict[str, Any], where: str) -> dict[str, Any]:
+        url = _text(item.get("url"), 200).rstrip("/")
+        category = _text(item.get("category"), 100).strip("/").removeprefix("c/")
+        if not url.startswith("https://") or any(c.isspace() for c in url) or url.count("/") < 2:
+            raise ValueError(f"{where}: the forum address starts with https:// (a Discourse forum)")
+        if not CATEGORY_RE.fullmatch(category):
+            raise ValueError(f"{where}: the category is a slug/id like public-cloud/11, or empty for the whole forum")
+        return {
+            "url": url,
+            "category": category,
+            "label": _text(item.get("label"), 60) or url.removeprefix("https://").split("/")[0],
+            "enabled": _flag(item.get("enabled")),
+        }
 
     @staticmethod
     def _github(item: dict[str, Any], where: str) -> dict[str, Any]:
@@ -130,6 +155,9 @@ class SourceConfig:
         }
 
     # --- What the collectors use ----------------------------------------------------------------
+
+    def enabled_forums(self) -> list[dict[str, Any]]:
+        return [f for f in self.forums if f["enabled"]]
 
     def repos(self) -> list[str]:
         return [g["repo"] for g in self.github if g["enabled"]]

@@ -7,33 +7,41 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-An MCP server and a dashboard that give a community team, and its AI assistant, a live view of the
-**OVHcloud Public Cloud community**: what users ask, what hurts, who is still waiting for an answer, what is already
-on the roadmap, and which questions the official documentation does not cover yet.
+A **neutral community radar**: an MCP server and a dashboard that watch the forums, GitHub repositories, Discord
+servers, subreddits and feeds of a developer community, and give its community team, and their AI assistant, a live
+view of what users ask, what hurts, who is still waiting for an answer, what is already on the roadmap, and which
+questions the documentation does not cover yet.
 
 It is built for the daily work of a Tech Community Manager / Developer Advocate: triage, answer with the right
 guide, report irritants to product teams with data, follow up when a fix ships, and turn recurring questions into
 tutorials.
 
-> Independent project built on public data. Not affiliated with or endorsed by OVHcloud.
+**Profiles** adapt it to a community. The core knows nothing about any vendor; it ships with an **OVHcloud Public
+Cloud** profile, the showcase in the screenshots below: point the radar at `community.ovhcloud.com` or the `ovh/*`
+repositories and it switches to it on its own.
+
+> Independent project built on public data. Not affiliated with or endorsed by OVHcloud or any other vendor.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/report-dark.png">
-  <img alt="Community Radar report: KPIs, conversation by product, top irritants, period and platform filters" src="docs/img/report-light.png">
+  <img alt="Community Radar report with the OVHcloud Public Cloud profile: KPIs, conversation by product, top irritants, period and platform filters" src="docs/img/report-light.png">
 </picture>
 
 ## Highlights
 
-- **Every channel in one place**: the official forum, the public roadmap, the Terraform provider and CLI issues,
-  Discord through an invited read-only bot, Reddit, and ~500 official guides. Each thread is classified by product
-  and signal (incident, bug, billing, security, feature request, question), in English and French.
+- **Every channel in one place**: any Discourse forum, a public roadmap on GitHub, issues of any repositories,
+  Discord through an invited read-only bot, subreddits and RSS feeds. Each thread is classified by signal (incident,
+  bug, billing, security, feature request, question) and by topic, in English and French.
+- **Neutral core, community profiles**: a generic profile that uses the platforms' own tags as topics, a cloud
+  profile, and an OVHcloud Public Cloud profile with its product taxonomy, scope rules and ~500 official guides.
+  The profile is detected from the sources or picked on the Sources page.
 - **Follow-ups, not just "unanswered"**: reads GitHub issue timelines to catch a fix that was merged while nobody
   told the reporter, work in progress nobody talks about, issues closed without a word, users waiting on us.
 - **A triage queue with history**: statuses (new, in progress, escalated to Support / Product / Engineering /
   Docs, waiting on user, answered, resolved, dismissed), notes and a full log. Handled threads come back on top when
   the community writes again.
-- **Sources you control**: add or switch off GitHub repositories, Discord servers, subreddits and RSS feeds from
-  the Sources page (up to 20 of each), with the thread count or last error of each one.
+- **Sources you control**: add or switch off forums, GitHub repositories, Discord servers, subreddits and RSS feeds
+  from the Sources page (up to 20 of each), with the thread count or last error of each one.
 - **Irritant reports and tutorial ideas** for product and docs teams, with the threads as evidence.
 - **Built for an assistant**: 11 MCP tools and 3 prompts, so Claude (or any MCP client) can triage, draft an
   on-brand reply with the right guide, or write the weekly note for product managers. It drafts; it never posts.
@@ -43,32 +51,29 @@ tutorials.
 
 ```mermaid
 flowchart LR
-    forum["Forum (Discourse API)"] --> radar
-    github["GitHub: roadmap, Terraform, CLI"] --> radar
+    forum["Discourse forums"] --> radar
+    github["GitHub: roadmap and repositories"] --> radar
     discord["Discord (invited read-only bot)"] --> radar
-    ingest["Other channels via n8n → POST /ingest"] --> radar
-    docs["Official guides (ovh/docs)"] --> radar
+    ingest["Subreddits and feeds via n8n → POST /ingest"] --> radar
+    profile["Profile: taxonomy, scope, docs index"] --> radar
     radar["Collector + classifier + follow-up analysis"] --> mcp["11 MCP tools → AI assistant"]
     radar --> report["/report and weekly digest"]
     radar --> triage["/triage queue + SQLite history"]
-    sources["/sources: repos, servers, subreddits, feeds"] -.-> radar
+    sources["/sources: profile, forums, repos, servers, subreddits, feeds"] -.-> radar
     sources -.->|"feeds to read"| ingest
 ```
 
 ## What it watches
 
-| Channel | Source | What is read |
+| Channel | Source (example: the OVHcloud Public Cloud profile) | What is read |
 |---|---|---|
-| Forum | [community.ovhcloud.com](https://community.ovhcloud.com/c/public-cloud/11), Public Cloud category (Discourse JSON API) | topics, replies, views, likes, accepted answers, staff replies |
-| Public roadmap | [ovh/public-cloud-roadmap](https://github.com/ovh/public-cloud-roadmap) | requests, product labels, 👍 votes, shipped/closed state |
-| GitHub issues | [ovh/terraform-provider-ovh](https://github.com/ovh/terraform-provider-ovh), [ovh/ovhcloud-cli](https://github.com/ovh/ovhcloud-cli) | bug reports and questions from IaC/CLI users |
-| Reddit | [r/ovh](https://www.reddit.com/r/ovh) | newest posts through the official API when approved credentials are set, or pushed by your own collector to [`/ingest`](#importing-other-channels) (Public Cloud threads only) |
-| Discord | a server the radar's bot was invited to (e.g. the OVHcloud Discord) | forum posts, threads and questions asked in text channels with their replies, staff recognised by role |
-| Official guides | [ovh/docs](https://github.com/ovh/docs) | ~500 Public Cloud guides, indexed for search (bundled, rebuildable) |
-
-Every thread is classified by **product** (Compute, Managed Kubernetes, Object Storage, Block Storage, Network,
-Managed Databases, AI, Data, API/CLI/IaC, Registry, Billing, IAM) and **signal** (incident, bug, billing,
-security, feature request, question), in English and French.
+| Forums | any Discourse forum or category, e.g. [community.ovhcloud.com](https://community.ovhcloud.com/c/public-cloud/11), Public Cloud category | topics, replies, views, likes, accepted answers, staff replies |
+| Public roadmap | an optional GitHub repository, e.g. [ovh/public-cloud-roadmap](https://github.com/ovh/public-cloud-roadmap) | requests, labels, 👍 votes, shipped/closed state |
+| GitHub issues | any repositories, e.g. [ovh/terraform-provider-ovh](https://github.com/ovh/terraform-provider-ovh), [ovh/ovhcloud-cli](https://github.com/ovh/ovhcloud-cli) | bug reports and questions |
+| Reddit | any subreddits, e.g. [r/ovh](https://www.reddit.com/r/ovh) | newest posts through the official API when approved credentials are set, or pushed by your own collector to [`/ingest`](#importing-other-channels) (only posts in the profile's scope) |
+| Discord | servers the radar's bot was invited to | forum posts, threads and questions asked in text channels with their replies, staff recognised by role |
+| RSS / Atom | any feeds, pushed by your own collector | items, kept when in the profile's scope |
+| Official guides | the profile's documentation index, e.g. [ovh/docs](https://github.com/ovh/docs) | ~500 OVHcloud Public Cloud guides, indexed for search (bundled, rebuildable) |
 
 Reddit requires approved access to its Data API
 ([Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy)),
@@ -77,6 +82,19 @@ so the radar does not scrape it: the API channel stays off until credentials are
 Discord works the same way: no scraping, no user account, only a read-only bot that the server admins invited
 (see [Discord](#discord)).
 
+## Profiles
+
+| Profile | Topics | Scope of imported channels | Docs index | Title |
+|---|---|---|---|---|
+| **Generic** (default) | the platforms' own tags and labels (forum tags, GitHub labels, Discord forum tags) | everything | – | Community Radar |
+| **Cloud** | Compute, Kubernetes, Object Storage, Block & File Storage, Network, Databases, AI, API/CLI/IaC, Billing, IAM, with no vendor's names | everything | – | Cloud Community Radar |
+| **OVHcloud Public Cloud** | the same families plus OVHcloud's own names (vRack, MKS, AI Endpoints, b3/c3 flavours…) and its roadmap labels | Public Cloud only: VPS, dedicated servers, domains and hosting threads are left out | ~500 official guides | OVHcloud Public Cloud Community Radar |
+
+**Auto** (the default choice) detects the profile from the sources: a forum on ovhcloud.com, `ovh/*` repositories
+or r/ovh select OVHcloud Public Cloud; anything else stays generic. A profile can also be forced on the Sources page,
+or with `RADAR_PROFILE` on a fresh install, which then starts with that profile's preset sources. "Load preset
+sources" on the Sources page fills forums, roadmap, repositories and subreddits from the profile.
+
 ## Tools
 
 | Tool | Use it to… |
@@ -84,7 +102,7 @@ Discord works the same way: no scraping, no user account, only a read-only bot t
 | `community_pulse` | get the numbers: active and new threads, trend vs previous period, answered/solved rates, forum median first-response time, by channel and product |
 | `find_irritants` | rank products by pain (negative signals, engagement, growth) with example threads: the input for a product-team report |
 | `unanswered_questions` | triage what nobody answered yet, oldest and most viewed first |
-| `follow_ups` | find threads where OVHcloud owes the user a message, with the evidence and what to say (see below) |
+| `follow_ups` | find threads where the team owes the user a message, with the evidence and what to say (see below) |
 | `search_threads` | find what the community already said about a topic |
 | `roadmap_status` | answer "is this planned?" with matching roadmap items, their state and votes |
 | `search_docs` | point a user to the right official guide (English or French link) |
@@ -124,8 +142,12 @@ stay grounded in links the server returns.
 ```sh
 pip install git+https://github.com/Kestrall/community-radar-mcp
 export GITHUB_TOKEN=...          # recommended: a classic token with no scope lifts GitHub's 60 requests/hour limit
+export RADAR_PROFILE=ovhcloud    # optional: start with a profile's preset sources (generic and empty otherwise)
 community-radar                  # MCP over stdio
 ```
+
+Over HTTP (`community-radar serve --transport streamable-http`), open `/sources` to pick the profile and add your
+forums, repositories, Discord servers, subreddits and feeds.
 
 Claude Desktop (`claude_desktop_config.json`):
 
@@ -142,7 +164,7 @@ Claude Code: `claude mcp add community-radar -- community-radar`, or over HTTP o
 
 Then ask, for example:
 
-- "What are the Public Cloud irritants of the last two weeks? Write it as a note for the product managers."
+- "What are the community's irritants of the last two weeks? Write it as a note for the product managers."
 - "Which questions are still waiting for an answer? Draft a reply to the most urgent one."
 - "Is Karpenter support for Managed Kubernetes on the roadmap, and how many people want it?"
 - "Which tutorial is missing from the docs, judging by the forum?"
@@ -197,7 +219,9 @@ right away, no restart.
 
 | Kind | Up to | How it is read |
 |---|---|---|
-| Public roadmap | 1 | GitHub issues of the roadmap repository (requests, votes, shipped state) |
+| Community profile | 1 | Auto (detected from the sources), Generic, Cloud or OVHcloud Public Cloud, see [Profiles](#profiles) |
+| Forums | 20 | Discourse JSON API: a whole forum or one category |
+| Public roadmap | 1 | optional: GitHub issues of the roadmap repository (requests, votes, shipped state) |
 | GitHub repositories | 20 | issues of each `owner/repo` (bugs, questions) |
 | Discord servers | 20 | the same read-only bot, invited on each server; optional label, channel filter and demo flag |
 | Subreddits | 20 | the official API when credentials are approved, otherwise your own collector pushes them to `/ingest` |
@@ -245,7 +269,7 @@ your own responsibility for each platform's terms. Push them to `POST /ingest` w
 `Authorization: Bearer $RADAR_INGEST_TOKEN`:
 
 ```json
-{"source": "stackoverflow", "channel": "Stack Overflow [ovh]", "items": [
+{"source": "stackoverflow", "channel": "Stack Overflow [my-product]", "items": [
   {"id": "79123456", "title": "…", "url": "https://stackoverflow.com/q/79123456", "created": "2026-11-05T08:00:00Z",
    "author": "…", "text": "…", "replies": 2, "score": 3, "labels": ["kubernetes"]}
 ]}
@@ -263,13 +287,14 @@ imported `reddit` channel is hidden as soon as the official Reddit API is config
 | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | – | Reddit "script" app for the official API; the Reddit channel is off without them |
 | `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID` | – | bot token and server id; the Discord channel is off without them |
 | `DISCORD_CHANNELS` | all readable | comma-separated channel names or ids to watch |
-| `DISCORD_STAFF_ROLES` | `staff\|team\|ovhcloud\|admin\|modo\|moderat` | regular expression on role names that mark staff answers |
+| `DISCORD_STAFF_ROLES` | `staff\|team\|admin\|modo\|moderat\|employee` (+ `ovhcloud` with the OVHcloud profile) | regular expression on role names that mark staff answers |
 | `DISCORD_INCLUDE_WEBHOOKS` | `false` | count webhook posts as members (demo servers only: elsewhere webhooks are feeds) |
 | `DISCORD_DEMO` | `false` | mark Discord threads as fictional demo data (badge and banner in the report, `demo` in tool results) |
 | `DISCORD_PAGES` | `5` | pages read per channel (100 messages or 50 archived posts each) |
 | `RADAR_INGEST_TOKEN` | – | enables `POST /ingest` for threads pushed by an external collector (bearer token) |
 | `RADAR_INBOX_PATH` | in memory | JSON file that keeps imported threads (120 days) |
-| `RADAR_SOURCES_PATH` | defaults | JSON file that keeps the sources edited on `/sources` |
+| `RADAR_PROFILE` | `auto` | `generic`, `cloud` or `ovhcloud`: profile of a fresh install, with its preset sources |
+| `RADAR_SOURCES_PATH` | defaults | JSON file that keeps the profile and sources edited on `/sources` |
 | `RADAR_TRIAGE_PATH` | in memory | SQLite file that keeps triage statuses and their history |
 | `RADAR_CACHE_TTL` | `900` | cache for community data, in seconds (the full roadmap is cached 6 h) |
 | `RADAR_DOCS_INDEX` | bundled | path to a guide index rebuilt with `community-radar build-docs` |
@@ -288,6 +313,9 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest --cov      # no network access needed: HTTP is mocked
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
+
+With Node.js on the path, the tests also check that the pages' inline JavaScript parses. New profiles live in
+`src/community_radar/profiles.py`: a taxonomy, optional scope rules, a detection pattern and preset sources.
 
 ## License
 

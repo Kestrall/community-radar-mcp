@@ -105,6 +105,6 @@ async def test_imported_threads_join_the_collected_ones(monkeypatch):
 )
 def test_only_public_cloud_threads_are_imported(title, text, kept):
     from community_radar.models import Thread
-    from community_radar.products import classify, in_public_cloud
+    from community_radar.products import classify, in_scope
 
-    assert in_public_cloud(classify(Thread("reddit", "x", title, "https://x", NOW, NOW, text))) is kept
+    assert in_scope(classify(Thread("reddit", "x", title, "https://x", NOW, NOW, text))) is kept

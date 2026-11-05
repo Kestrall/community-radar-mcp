@@ -2,7 +2,9 @@ import httpx
 import pytest
 import respx
 
-from community_radar.sources import FORUM, Collector, RateLimited, html_to_text
+from community_radar.sources import Collector, RateLimited, html_to_text
+
+FORUM = "https://community.ovhcloud.com"
 
 TOPIC = {
     "id": 54094,

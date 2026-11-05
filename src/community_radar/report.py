@@ -34,7 +34,11 @@ class Snapshot:
     reddit: bool = False
     discord: bool = False
     imported: list[tuple[str, str]] = field(default_factory=list)  # (source, channel) pushed through /ingest
-    roadmap_repo: str = "ovh/public-cloud-roadmap"
+    title: str = "Community Radar"
+    vendor: str = ""  # who runs the community, for the "not affiliated" note
+    has_docs: bool = False
+    forums: list[str] = field(default_factory=list)
+    roadmap_repo: str = ""
     repos: list[str] = field(default_factory=list)
     subreddits: list[str] = field(default_factory=list)
     discord_servers: list[tuple[str, bool]] = field(default_factory=list)  # (name, demo)
@@ -46,13 +50,14 @@ async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7, source:
     if source:
         threads = [t for t in threads if t.source == source]
     requests = [t for t in analytics.window(threads, days) if t.source == "roadmap" and not t.solved]
+    guides = collector.guides(docs)
     return Snapshot(
         days=days,
         generated=datetime.now(UTC),
         pulse=await analytics.pulse(collector, threads, days, None),
         irritants=analytics.irritants(threads, days, 5),
         follow_ups=(await followup.follow_ups(collector, threads, max(days, 30)))[:10],
-        gaps=analytics.content_gaps(threads, docs, max(days, 30), 6),
+        gaps=analytics.content_gaps(threads, guides, max(days, 30), 6) if guides.guides else [],
         top_requests=sorted(requests, key=lambda t: -t.reactions)[:6],
         errors=dict(collector.errors),
         reddit=collector.reddit_enabled,
@@ -61,6 +66,13 @@ async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7, source:
             (k, c)
             for k, c in collector.inbox.channels()
             if collector.config.allows_import(k, c) and not (k == "reddit" and collector.reddit_enabled)
+        ],
+        title=collector.profile.title,
+        vendor=collector.profile.vendor,
+        has_docs=bool(guides.guides),
+        forums=[
+            f["url"].removeprefix("https://") + (f"/c/{f['category']}" if f["category"] else "")
+            for f in collector.config.enabled_forums()
         ],
         roadmap_repo=collector.config.roadmap,
         repos=collector.config.repos(),
@@ -289,22 +301,42 @@ def render_html(s: Snapshot) -> str:
 <meta name=viewport content="width=device-width,initial-scale=1"><title>Community Radar</title>
 <style>{CSS}</style></head><body><main>
 {top_nav("report", s.days)}
-<header><h1>Public Cloud Community Radar{escape(" · " + SOURCE_NAMES.get(s.source, s.source)) if s.source else ""}</h1>
-<p>Last {s.days} days · generated {now:%Y-%m-%d %H:%M} UTC · {escape(sources)}</p>{period_links("/report", s.days, f"&source={s.source}" if s.source else "")}{_platform_links(s)}{demo_note}</header>
+<header><h1>{escape(s.title)}{escape(" · " + SOURCE_NAMES.get(s.source, s.source)) if s.source else ""}</h1>
+<p>Last {s.days} days · generated {now:%Y-%m-%d %H:%M} UTC · {escape(sources)}</p>{
+        period_links("/report", s.days, f"&source={s.source}" if s.source else "")
+    }{_platform_links(s)}{demo_note}</header>
 <section class=kpis>{kpi_html}</section>
 <h2>Where the conversation is</h2><div class="card bars">{bars or "<span class=muted>No activity.</span>"}</div>
 <h2>Top irritants to bring to product teams</h2><div class=grid>{irritants}</div>
 <h2>Next moves for the community team</h2>
-<p class=muted>Threads where OVHcloud owes the user a message, read from the full GitHub timeline (assignments,
+<p class=muted>Threads where the team owes the user a message, read from the full GitHub timeline (assignments,
 milestones, linked pull requests), not only from comments.</p>
 <table><tr><th>Thread</th><th>Status</th><th>What to do</th><th>Waiting</th></tr>{follow_ups}</table>
-<h2>Content gaps: tutorial ideas</h2>
-<table><tr><th>Community question</th><th>Closest official guide (match score)</th></tr>{gaps}</table>
-<h2>Most wanted on the roadmap</h2>
-<table><tr><th>Request</th><th>Votes</th><th>Comments</th><th>Labels</th></tr>{requests}</table>
-<p class=note>Sources: community.ovhcloud.com (Public Cloud), github.com/{escape(s.roadmap_repo)},
-{"".join(f" {escape(r)}," for r in s.repos)}{"".join(f" Reddit r/{escape(r)}," for r in s.subreddits) if s.reddit else ""}{"".join(f" {escape(c)} (imported)," for _, c in s.imported)}{"".join(f" Discord server « {escape(name)} »{' (fictional demo data)' if demo else ''}," for name, demo in s.discord_servers)} github.com/ovh/docs. Independent project built on public
-data, not affiliated with OVHcloud.</p>{errors}
+{
+        f'''<h2>Content gaps: tutorial ideas</h2>
+<table><tr><th>Community question</th><th>Closest official guide (match score)</th></tr>{gaps}</table>'''
+        if s.has_docs
+        else ""
+    }
+{
+        f'''<h2>Most wanted on the roadmap</h2>
+<table><tr><th>Request</th><th>Votes</th><th>Comments</th><th>Labels</th></tr>{requests}</table>'''
+        if s.roadmap_repo
+        else ""
+    }
+<p class=note>Sources:{"".join(f" {escape(f)}," for f in s.forums)}{
+        f" github.com/{escape(s.roadmap_repo)}," if s.roadmap_repo else ""
+    }
+{"".join(f" {escape(r)}," for r in s.repos)}{
+        "".join(f" Reddit r/{escape(r)}," for r in s.subreddits) if s.reddit else ""
+    }{"".join(f" {escape(c)} (imported)," for _, c in s.imported)}{
+        "".join(
+            f" Discord server « {escape(name)} »{' (fictional demo data)' if demo else ''},"
+            for name, demo in s.discord_servers
+        )
+    }{" official guides." if s.has_docs else ""} Built on public data{
+        f", independent project not affiliated with {escape(s.vendor)}" if s.vendor else ""
+    }.</p>{errors}
 </main></body></html>"""
 
 
@@ -316,7 +348,7 @@ def render_telegram(s: Snapshot) -> list[str]:
     p = s.pulse
     e = escape
     head = (
-        f"📡 <b>Public Cloud Community Radar</b> · last {s.days} days\n\n"
+        f"📡 <b>{e(s.title)}</b> · last {s.days} days\n\n"
         f"• {p.total} active threads, {p.new_threads} new ({_trend(p.new_threads, p.previous_new_threads)})\n"
         f"• {p.unanswered} without reply · answered {_pct(p.answered_rate)} · solved {_pct(p.solved_rate)}\n"
         + (

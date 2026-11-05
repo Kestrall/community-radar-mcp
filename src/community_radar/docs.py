@@ -1,4 +1,5 @@
-"""Index of the official Public Cloud guides (github.com/ovh/docs) and a small keyword search over it."""
+"""Documentation index and a small keyword search over it. The bundled index holds the official OVHcloud Public Cloud
+guides (github.com/ovh/docs), used by the OVHcloud Public Cloud profile; RADAR_DOCS_INDEX can point to another one."""
 
 from __future__ import annotations
 

@@ -34,7 +34,7 @@ async def test_lists_tools_prompts_and_resources(collector, docs):
         "update_triage",
     }
     assert prompts == {"weekly_report", "draft_reply", "tutorial_from_gap"}
-    assert "3 Public Cloud guides" in sources and "`kubernetes`" in taxonomy
+    assert "3 guides indexed" in sources and "`kubernetes`" in taxonomy
     assert "find_irritants(days=14)" in report.messages[0].content.text
 
 

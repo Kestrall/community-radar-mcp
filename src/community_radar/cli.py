@@ -165,7 +165,7 @@ def main() -> None:
     report.add_argument("-o", "--out", default="radar.html")
     digest = sub.add_parser("digest", help="print the Telegram digest messages as JSON")
     digest.add_argument("--days", type=int, default=7)
-    build = sub.add_parser("build-docs", help="rebuild the index of official guides from github.com/ovh/docs")
+    build = sub.add_parser("build-docs", help="rebuild the OVHcloud Public Cloud guide index from github.com/ovh/docs")
     build.add_argument("-o", "--out", default=os.getenv("RADAR_DOCS_INDEX") or "docs_index.json")
     args = parser.parse_args()
 

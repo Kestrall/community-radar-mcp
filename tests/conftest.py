@@ -4,10 +4,23 @@ import pytest
 
 from community_radar.docs import DocsIndex
 from community_radar.models import Guide, Thread
-from community_radar.products import classify
+from community_radar.products import classify, use_taxonomy
+from community_radar.profiles import OVHCLOUD
 from community_radar.sources import Collector, Post
 
+# Most tests use the OVHcloud Public Cloud profile, the radar's showcase; neutral profiles have their own tests.
+use_taxonomy(OVHCLOUD.taxonomy)
 NOW = datetime.now(UTC)
+
+
+@pytest.fixture(autouse=True)
+def ovhcloud_profile(monkeypatch):
+    monkeypatch.setenv("RADAR_PROFILE", "ovhcloud")
+    for name in ("RADAR_SOURCES_PATH", "RADAR_DOCS_INDEX", "RADAR_INBOX_PATH", "RADAR_TRIAGE_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    use_taxonomy(OVHCLOUD.taxonomy)
+    yield
+    use_taxonomy(OVHCLOUD.taxonomy)
 
 
 def iso(moment: datetime) -> str:
@@ -108,7 +121,7 @@ class FakeCollector(Collector):
             return t.created + timedelta(hours=2), True
         return None, False
 
-    async def forum_topic(self, topic_id):
+    async def forum_topic(self, url):
         return "S3 503", [
             Post("alice", NOW - timedelta(days=2), "GET returns 503"),
             Post("ovh_staff", NOW - timedelta(days=1), "We are looking into it", True),

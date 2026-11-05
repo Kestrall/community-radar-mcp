@@ -1,101 +1,13 @@
-"""Public Cloud product taxonomy and signal detection (incident, bug, billing…), in English and French."""
+"""Classification: product taxonomy (set by the active profile, see profiles.py) and signal detection (incident,
+bug, billing…), in English and French."""
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass, field
 
 from .models import Thread
-
-# key: (label, keywords, roadmap labels). Keywords are matched on accent-free lowercase text.
-PRODUCTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
-    "compute": (
-        "Compute instances",
-        r"\binstances?\b|\bvm\b|flavou?r|\bgpu\b|l40s|h100|a100|l4\b|snapshot|cloud-init|\bnova\b|\bimage\b"
-        r"|\bb3-|\bc3-|\br3-|\bd2-|\bb2-|metal instance|rescue",
-        ("Compute", "GPU", "Image Lifecycle"),
-    ),
-    "kubernetes": (
-        "Managed Kubernetes",
-        r"kubernetes|\bk8s\b|\bmks\b|kubectl|node ?pool|\bhelm\b|ingress|kubeconfig|rancher",
-        ("Containers",),
-    ),
-    "object_storage": (
-        "Object Storage",
-        r"object storage|\bs3\b|bucket|\bswift\b|cold archive|high perf(ormance)? storage",
-        ("Object Storage", "Storage"),
-    ),
-    "block_storage": (
-        "Block & File Storage",
-        r"block storage|\bvolumes?\b|cinder|file storage|\bnfs\b|\bbackups?\b|sauvegarde",
-        ("Block Storage", "File Storage", "backup"),
-    ),
-    "network": (
-        "Network",
-        r"vrack|private network|reseau prive|load ?balancer|octavia|floating ip|\bgateway\b|public ip|ip publique"
-        r"|security groups?|firewall|pare-?feu|\bdns\b|\bvpn\b|\bsubnet",
-        ("Network", "Geo"),
-    ),
-    "databases": (
-        "Managed Databases",
-        r"database|base de donnees|postgres|mysql|mongo|redis|valkey|kafka|opensearch|clickhouse|cassandra|\bm3db",
-        (
-            "Managed Databases",
-            "PostgreSQL",
-            "MySQL",
-            "MongoDB",
-            "Redis",
-            "Valkey",
-            "Kafka",
-            "OpenSearch",
-            "ClickHouse",
-            "Cassandra",
-            "M3db",
-        ),
-    ),
-    "ai": (
-        "AI & Machine Learning",
-        r"ai endpoints?|ai deploy|ai training|ai notebooks?|\bllm|inference|\b(ai|llm|language|vision) models?\b"
-        r"|ovhai|machine learning"
-        r"|\bml\b|qwen|llama|mistral|embedding",
-        ("AI Deploy", "AI Endpoints", "AI Notebooks", "AI Training", "ML Serving", "Machine Learning Services"),
-    ),
-    "data_platform": (
-        "Data & Analytics",
-        r"data platform|data processing|spark|flink|lakehouse|data catalog|analytics|grafana|dashboards?",
-        (
-            "Analytics Manager",
-            "Data Catalog",
-            "Data Integration",
-            "Data Platform",
-            "Data Processing",
-            "Data Processing Engine",
-            "Flink",
-            "Lakehouse Manager",
-            "Spark",
-            "Grafana",
-            "Observability",
-        ),
-    ),
-    "iac_cli_api": (
-        "API, CLI & IaC",
-        r"terraform|pulumi|ovhcloud-cli|\bcli\b|\bapi\b|\bsdk\b|horizon|openstack (cli|client)|ansible"
-        r"|provider|\btoken\b",
-        ("API/CLI/UI", "APP/API", "CLI"),
-    ),
-    "registry": ("Container Registry", r"registry|harbor", ()),
-    "billing": (
-        "Billing & quotas",
-        r"billing|factur|invoice|pricing|\bprices?\b|\bprix\b|\bcosts?\b|\bcout|voucher|credits?\b|quota|charged"
-        r"|\beur\b|€",
-        ("Billing",),
-    ),
-    "iam_security": (
-        "IAM & security",
-        r"\biam\b|identity|\b2fa\b|mfa|permissions?|access key|security|securite|compliance|kms|secret",
-        ("Identity Access Manager", "Security & Compliance"),
-    ),
-}
 
 SIGNALS: dict[str, str] = {
     "incident": r"\b503\b|\b502\b|outage|incident|\bdown\b|\bpanne\b|\bhs\b|unavailable|indisponible|maintenance"
@@ -110,17 +22,45 @@ SIGNALS: dict[str, str] = {
 }
 
 NEGATIVE = ("incident", "bug", "billing", "security")
-# Imported channels (r/ovh…) speak about every OVHcloud product: only Public Cloud threads are kept.
-_PUBLIC_CLOUD = re.compile(r"public cloud|cloud public|\bpci\b|openstack|horizon")
-_OTHER_PRODUCTS = re.compile(
-    r"\bvps\b|dedicated server|serveurs? dedies?|bare ?metal server|kimsufi|so ?you ?start|\beco\b range"
-    r"|\bdomains?\b|\bdomaines?\b|whois|\bdkim\b|registrar|web ?hosting|hebergement web|\bhosting\b|cluster\d{3}"
-    r"|e-?mail pro|exchange|private cloud|vmware|nutanix|\bsms\b|telephon"
+# Platform labels that say what kind of thread it is, not what it is about.
+_TYPE_LABELS = re.compile(
+    r"^(bug|feature|enhancement|question|help wanted|good first issue|duplicate|wontfix|invalid|solved|resolved"
+    r"|resolu|answered|documentation|docs|triage|needs?[ -].*|status:.*|type:.*|priority:.*|demo|stale)$"
 )
-# Billing and IAM cut across every product: on their own they do not place a thread in the Public Cloud.
-_CROSS_CUTTING = {"billing", "iam_security"}
-_LABEL_TO_PRODUCT = {label.lower(): key for key, (_, _, labels) in PRODUCTS.items() for label in labels}
-_PRODUCT_RE = {key: re.compile(pattern) for key, (_, pattern, _) in PRODUCTS.items()}
+
+
+@dataclass
+class Taxonomy:
+    """What threads are about. Products: key -> (label, keywords regex on accent-free lowercase text, labels used
+    by the platforms for it). `scope_in`/`scope_out` decide which imported threads belong to the community's scope;
+    with `use_labels`, platform tags and labels become topics when no product matches."""
+
+    products: dict[str, tuple[str, str, tuple[str, ...]]] = field(default_factory=dict)
+    scope_in: str | None = None
+    scope_out: str | None = None
+    cross_cutting: frozenset[str] = frozenset()
+    use_labels: bool = False
+
+    def __post_init__(self) -> None:
+        self.by_label = {lbl.lower(): key for key, (_, _, labels) in self.products.items() for lbl in labels}
+        self.patterns = {key: re.compile(pattern) for key, (_, pattern, _) in self.products.items()}
+        self.scope_in_re = re.compile(self.scope_in) if self.scope_in else None
+        self.scope_out_re = re.compile(self.scope_out) if self.scope_out else None
+
+
+_active = Taxonomy(use_labels=True)
+
+
+def use_taxonomy(taxonomy: Taxonomy) -> None:
+    """Switch the taxonomy every classification uses (the collector does it when the profile changes)."""
+    global _active
+    _active = taxonomy
+
+
+def taxonomy() -> Taxonomy:
+    return _active
+
+
 _SIGNAL_RE = {key: re.compile(pattern) for key, pattern in SIGNALS.items()}
 # Security groups and firewall rules are network configuration: they say nothing about a security problem or IAM.
 _NETWORK_SECURITY = re.compile(r"security[ -]?groups?|groupes? de securite|firewall rules?|regles? de pare-?feu")
@@ -138,7 +78,7 @@ def fold(text: str) -> str:
 
 
 def label(product: str) -> str:
-    return PRODUCTS[product][0] if product in PRODUCTS else product
+    return _active.products[product][0] if product in _active.products else product
 
 
 def resolve_product(name: str | None) -> str | None:
@@ -146,32 +86,39 @@ def resolve_product(name: str | None) -> str | None:
     if not name:
         return None
     wanted = fold(name).strip()
-    for key, (title, _, _) in PRODUCTS.items():
+    for key, (title, _, _) in _active.products.items():
         if wanted in (key, fold(title)) or wanted in fold(title):
             return key
-    for key, pattern in _PRODUCT_RE.items():
+    for key, pattern in _active.patterns.items():
         if pattern.search(wanted):
             return key
-    raise ValueError(f"Unknown product {name!r}. Known products: {', '.join(PRODUCTS)}")
+    if _active.use_labels:
+        return wanted
+    raise ValueError(f"Unknown product {name!r}. Known products: {', '.join(_active.products)}")
 
 
-def in_public_cloud(thread: Thread) -> bool:
-    """Whether a thread from a channel covering every OVHcloud product is about the Public Cloud."""
-    text = fold(thread.text)
-    if _PUBLIC_CLOUD.search(text):
+def in_scope(thread: Thread) -> bool:
+    """Whether an imported thread (a subreddit or feed that covers more than the community) belongs to its scope.
+    Without scope rules every thread does."""
+    t = _active
+    if not (t.scope_in_re or t.scope_out_re):
         return True
-    return bool(set(thread.products) - _CROSS_CUTTING) and not _OTHER_PRODUCTS.search(text)
+    text = fold(thread.text)
+    if t.scope_in_re and t.scope_in_re.search(text):
+        return True
+    return bool(set(thread.products) - t.cross_cutting) and not (t.scope_out_re and t.scope_out_re.search(text))
 
 
 def classify(thread: Thread) -> Thread:
     """Fill thread.products and thread.signals from its labels, title and excerpt."""
     text = _NOISE.sub(" ", fold(thread.text))
-    products = [_LABEL_TO_PRODUCT[lbl.lower()] for lbl in thread.labels if lbl.lower() in _LABEL_TO_PRODUCT]
+    t = _active
+    products = [t.by_label[lbl.lower()] for lbl in thread.labels if lbl.lower() in t.by_label]
     plain = _NETWORK_SECURITY.sub(" network-rules ", text)
-    products += [
-        key for key, pattern in _PRODUCT_RE.items() if pattern.search(plain if key == "iam_security" else text)
-    ]
-    thread.products = list(dict.fromkeys(products))
+    products += [key for key, pattern in t.patterns.items() if pattern.search(plain if key == "iam_security" else text)]
+    if not products and t.use_labels:
+        products = [fold(lbl).strip() for lbl in thread.labels if not _TYPE_LABELS.match(fold(lbl).strip())]
+    thread.products = list(dict.fromkeys(p for p in products if p))
     # Roadmap issues follow a template full of words like "error" or "cost": only their title tells the signal.
     signal_text = _NETWORK_SECURITY.sub(" network-rules ", fold(thread.title) if thread.source == "roadmap" else text)
     signals = [key for key, pattern in _SIGNAL_RE.items() if pattern.search(signal_text)]

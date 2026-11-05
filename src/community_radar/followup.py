@@ -250,7 +250,7 @@ async def follow_ups(
     min_days: int = 2,
     max_checks: int = 60,
 ) -> list[FollowUp]:
-    """Community threads active in the last `days` where the next move belongs to OVHcloud, most useful first.
+    """Community threads active in the last `days` where the next move belongs to the team, most useful first.
 
     Reads one timeline per GitHub issue (cached): `max_checks` bounds the GitHub calls on large windows.
     """
@@ -268,7 +268,7 @@ async def follow_ups(
         async with gate:
             try:
                 if t.source == "forum":
-                    _, posts = await collector.forum_topic(t.id)
+                    _, posts = await collector.forum_topic(t.url)
                     return assess_forum(t, posts, now, min_days)
                 if t.source == "discord":
                     return assess_forum(t, await collector.discord_topic(t.id, t.url), now, min_days)

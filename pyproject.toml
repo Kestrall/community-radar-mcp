@@ -1,7 +1,7 @@
 [project]
 name = "community-radar-mcp"
 version = "0.1.0"
-description = "MCP server that turns OVHcloud Public Cloud community signals (forum, GitHub, Reddit) into answers, irritant reports and content ideas"
+description = "MCP server that turns OVHcloud Public Cloud community signals (forum, GitHub, Reddit, Discord) into answers, irritant reports and content ideas"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -38,3 +38,4 @@ ignore = ["SIM905"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/community_radar/report.py" = ["E501"]
+"tests/test_discord.py" = ["E501"]

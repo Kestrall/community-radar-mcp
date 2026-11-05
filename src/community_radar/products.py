@@ -105,7 +105,7 @@ SIGNALS: dict[str, str] = {
     "billing": r"factur|billing|invoice|charged|overcharg|refund|rembours|too expensive|trop cher|\bcost",
     "security": r"security|securite|hack|pirat|compromi|vulnerab|\bcve\b|leak|fuite|malware|phishing",
     "feature_request": r"feature|support for|would be (nice|great)|please add|\bajouter\b|possible d'avoir"
-    r"|suggestion|request|roadmap|\ballow\b|\bpermettre",
+    r"|suggestion|request|roadmap|\ballow (us|me|users?|customers?|to)\b|\bpermettre",
     "question": r"\bhow\b|\bcomment\b|\bwhy\b|pourquoi|est-ce que|is it possible|\?",
 }
 
@@ -113,6 +113,8 @@ NEGATIVE = ("incident", "bug", "billing", "security")
 _LABEL_TO_PRODUCT = {label.lower(): key for key, (_, _, labels) in PRODUCTS.items() for label in labels}
 _PRODUCT_RE = {key: re.compile(pattern) for key, (_, pattern, _) in PRODUCTS.items()}
 _SIGNAL_RE = {key: re.compile(pattern) for key, pattern in SIGNALS.items()}
+# Security groups and firewall rules are network configuration: they say nothing about a security problem or IAM.
+_NETWORK_SECURITY = re.compile(r"security[ -]?groups?|groupes? de securite|firewall rules?|regles? de pare-?feu")
 # Issue templates print the provider source ("registry.terraform.io/ovh/ovh"): not a Container Registry topic.
 _NOISE = re.compile(r"registry\.(terraform\.io|opentofu\.org)\S*")
 # On GitHub the issue type (title prefix or label) is more reliable than words found in the template.
@@ -148,10 +150,13 @@ def classify(thread: Thread) -> Thread:
     """Fill thread.products and thread.signals from its labels, title and excerpt."""
     text = _NOISE.sub(" ", fold(thread.text))
     products = [_LABEL_TO_PRODUCT[lbl.lower()] for lbl in thread.labels if lbl.lower() in _LABEL_TO_PRODUCT]
-    products += [key for key, pattern in _PRODUCT_RE.items() if pattern.search(text)]
+    plain = _NETWORK_SECURITY.sub(" network-rules ", text)
+    products += [
+        key for key, pattern in _PRODUCT_RE.items() if pattern.search(plain if key == "iam_security" else text)
+    ]
     thread.products = list(dict.fromkeys(products))
     # Roadmap issues follow a template full of words like "error" or "cost": only their title tells the signal.
-    signal_text = fold(thread.title) if thread.source == "roadmap" else text
+    signal_text = _NETWORK_SECURITY.sub(" network-rules ", fold(thread.title) if thread.source == "roadmap" else text)
     signals = [key for key, pattern in _SIGNAL_RE.items() if pattern.search(signal_text)]
     if thread.source == "roadmap" and "feature_request" not in signals:
         signals.append("feature_request")

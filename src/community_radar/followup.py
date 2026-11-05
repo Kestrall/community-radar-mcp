@@ -256,7 +256,9 @@ async def follow_ups(
     """
     now = datetime.now(UTC)
     candidates = [
-        t for t in by_product(window(threads, days), product) if t.source in ("github", "forum") and not t.staff_author
+        t
+        for t in by_product(window(threads, days), product)
+        if t.source in ("github", "forum", "discord") and not t.staff_author
     ]
     candidates = sorted(candidates, key=lambda t: t.last_activity, reverse=True)[:max_checks]
     gate = asyncio.Semaphore(8)
@@ -268,6 +270,8 @@ async def follow_ups(
                 if t.source == "forum":
                     _, posts = await collector.forum_topic(t.id)
                     return assess_forum(t, posts, now, min_days)
+                if t.source == "discord":
+                    return assess_forum(t, await collector.discord_topic(t.id), now, min_days)
                 repo, number = t.id.rsplit("#", 1)
                 return assess_issue(t, await collector.issue_timeline(repo, int(number)), now, min_days)
             except RateLimited as exc:

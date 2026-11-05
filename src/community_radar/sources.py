@@ -1,4 +1,4 @@
-"""Collectors for the public community channels: OVHcloud forum (Discourse), GitHub issues and Reddit."""
+"""Collectors for the community channels: OVHcloud forum (Discourse), GitHub issues, Reddit and Discord."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from .discord_source import DiscordSource, display_name, snowflake_time
 from .models import Thread
 from .products import classify
 
@@ -103,6 +104,8 @@ class Collector:
         self.reddit_secret = os.getenv("REDDIT_CLIENT_SECRET")
         # Reddit requires approved API access (Responsible Builder Policy): the channel is off without credentials.
         self.reddit_enabled = bool(self.reddit_id and self.reddit_secret)
+        # Discord only through a bot invited by the server admins: off without DISCORD_BOT_TOKEN/DISCORD_GUILD_ID.
+        self.discord = DiscordSource(self.client)
         self.errors: dict[str, str] = {}
 
     # --- HTTP helpers -------------------------------------------------------------------------
@@ -277,10 +280,29 @@ class Collector:
             )
         )
 
+    # --- Discord ------------------------------------------------------------------------------
+
+    @property
+    def discord_enabled(self) -> bool:
+        return self.discord.enabled
+
+    async def discord_topic(self, thread_id: str) -> list[Post]:
+        """Full conversation of a Discord thread or question (`channel/message` id), staff flagged by role."""
+        channel, root = thread_id.split("/")
+
+        async def fetch() -> list[Post]:
+            return [
+                Post(display_name(m.get("author")), snowflake_time(m["id"]), m.get("content") or "", m["staff"])
+                for m in await self.discord.conversation(channel, root)
+            ]
+
+        return await self.cache.get(f"discord-topic:{thread_id}", fetch)
+
     # --- Public API ---------------------------------------------------------------------------
 
     async def threads(self, refresh: bool = False) -> list[Thread]:
-        """Recent community activity: forum, Terraform/CLI issues, roadmap updates and Reddit (when enabled)."""
+        """Recent community activity: forum, Terraform/CLI issues, roadmap updates, Reddit and Discord (when
+        enabled)."""
         since = datetime.now(UTC) - timedelta(days=120)
 
         def guarded(name: str, fetch: Callable[[], Awaitable[list[Thread]]]) -> Awaitable[list[Thread]]:
@@ -297,6 +319,8 @@ class Collector:
                     "reddit", lambda: self._guarded("reddit", self._reddit), refresh, self._succeeded("reddit")
                 )
             )
+        if self.discord_enabled:
+            fetches.append(guarded("discord", lambda: self.discord.threads(since)))
         batches = await asyncio.gather(*fetches)
         return [t for batch in batches for t in batch]
 

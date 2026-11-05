@@ -60,7 +60,7 @@ async def pulse(collector: Collector, threads: list[Thread], days: int, product:
         (first - t.created).total_seconds() / 3600 for t, (first, _) in zip(forum, responses, strict=True) if first
     ]
     answered_forum = [staff for t, (first, staff) in zip(forum, responses, strict=True) if first]
-    questions = [t for t in current if t.source in ("forum", "github")]
+    questions = [t for t in current if t.source in ("forum", "github", "discord")]
     return Pulse(
         days=days,
         total=len(current),
@@ -85,7 +85,7 @@ def unanswered(threads: list[Thread], days: int, product: str | None) -> list[Th
     pending = [
         t
         for t in by_product(window(threads, days), product)
-        if t.source in ("forum", "github") and t.answered is False and not t.solved and not t.staff_author
+        if t.source in ("forum", "github", "discord") and t.answered is False and not t.solved and not t.staff_author
     ]
     return sorted(pending, key=lambda t: -((now - t.created).total_seconds() / 3600 * (1 + t.views / 50)))
 
@@ -154,7 +154,7 @@ def content_gaps(
     questions = [
         t
         for t in window(threads, days)
-        if t.source in ("forum", "reddit")
+        if t.source in ("forum", "reddit", "discord")
         or (t.source == "github" and "question" in t.signals and not set(t.signals) & {"bug", "incident", "security"})
     ]
     gaps = []

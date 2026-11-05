@@ -32,10 +32,16 @@ class Snapshot:
     top_requests: list[Thread]
     errors: dict[str, str]
     reddit: bool = False
+    discord: bool = False
+    discord_name: str = ""
+    discord_demo: bool = False
+    source: str | None = None  # report restricted to one channel (forum, github, roadmap, reddit, discord)
 
 
-async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7) -> Snapshot:
+async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7, source: str | None = None) -> Snapshot:
     threads = await collector.threads()
+    if source:
+        threads = [t for t in threads if t.source == source]
     requests = [t for t in analytics.window(threads, days) if t.source == "roadmap" and not t.solved]
     return Snapshot(
         days=days,
@@ -47,6 +53,10 @@ async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7) -> Snap
         top_requests=sorted(requests, key=lambda t: -t.reactions)[:6],
         errors=dict(collector.errors),
         reddit=collector.reddit_enabled,
+        discord=collector.discord_enabled,
+        discord_name=collector.discord.guild_name,
+        discord_demo=collector.discord.demo,
+        source=source,
     )
 
 
@@ -67,7 +77,13 @@ def _pct(value: float | None) -> str:
     return "–" if value is None else f"{round(value * 100)}%"
 
 
-SOURCE_NAMES = {"forum": "Forum", "github": "GitHub issues", "roadmap": "Roadmap", "reddit": "Reddit"}
+SOURCE_NAMES = {
+    "forum": "Forum",
+    "github": "GitHub issues",
+    "roadmap": "Roadmap",
+    "reddit": "Reddit",
+    "discord": "Discord",
+}
 
 
 # --- HTML -------------------------------------------------------------------------------------
@@ -97,6 +113,8 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 background:var(--accent-soft);color:var(--accent);white-space:nowrap}
 .badge.incident,.badge.security{background:var(--bad-soft);color:var(--bad)}
 .badge.bug,.badge.billing{background:var(--warn-soft);color:var(--warn)}
+.badge.demo{background:var(--warn-soft);color:var(--warn);text-transform:uppercase;letter-spacing:.04em}
+.demo-note{margin-top:16px;padding:10px 14px;border-radius:10px;background:var(--warn-soft);color:var(--warn);font-size:14px}
 .badge.ok,.badge.fixed_untold{background:var(--good-soft);color:var(--good)}
 .badge.no_response,.badge.closed_silently{background:var(--bad-soft);color:var(--bad)}
 .badge.silent_progress,.badge.triaged_silently,.badge.waiting_on_us{background:var(--warn-soft);color:var(--warn)}
@@ -116,7 +134,14 @@ def _badges(t: Thread) -> str:
 
 
 def _link(t: Thread) -> str:
-    return f'<a href="{escape(t.url)}">{escape(t.title)}</a>'
+    demo = ' <span class="badge demo">demo</span>' if t.demo else ""
+    return f'<a href="{escape(t.url)}">{escape(t.title)}</a>{demo}'
+
+
+def _scope(p: analytics.Pulse, sources: tuple[str, ...]) -> str:
+    """Channels a KPI is computed on, among those present in the report."""
+    names = [SOURCE_NAMES[s].replace(" issues", "") for s in sources if s in p.by_source]
+    return " & ".join([", ".join(names[:-1]), names[-1]] if len(names) > 2 else names) or "–"
 
 
 def render_html(s: Snapshot) -> str:
@@ -124,14 +149,14 @@ def render_html(s: Snapshot) -> str:
     kpis = [
         (p.total, "active threads", f"over {s.days} days"),
         (p.new_threads, "new threads", _trend(p.new_threads, p.previous_new_threads)),
-        (p.unanswered, "without any reply", "forum & GitHub"),
+        (p.unanswered, "without any reply", _scope(p, ("forum", "github", "discord"))),
         (_pct(p.answered_rate), "answered", "at least one reply"),
         (
             _delay(p.median_first_response_hours),
             "median first response",
             f"forum, {p.first_response_sample} topic{'s' if p.first_response_sample > 1 else ''} opened in the period",
         ),
-        (_pct(p.solved_rate), "solved / closed", "forum & GitHub"),
+        (_pct(p.solved_rate), "solved / closed", _scope(p, ("forum", "github", "discord"))),
     ]
     kpi_html = "".join(
         f"<div class=kpi><b>{v}</b><span>{escape(n)}</span><small>{escape(h)}</small></div>" for v, n, h in kpis
@@ -185,12 +210,19 @@ def render_html(s: Snapshot) -> str:
         )
         or "<tr><td colspan=4 class=muted>No roadmap activity in this period.</td></tr>"
     )
+    demo_note = (
+        f"<p class=demo-note>Discord threads come from the demo server « {escape(s.discord_name or 'unnamed')} »: "
+        "fictional conversations written to show the radar at work, marked <b>DEMO</b>. They are not real "
+        "community signals.</p>"
+        if s.discord_demo and p.by_source.get("discord")
+        else ""
+    )
     errors = f"<p class=note>Unavailable during this run: {escape(', '.join(s.errors))}.</p>" if s.errors else ""
     return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>Community Radar</title>
 <style>{CSS}</style></head><body><main>
-<header><h1>Public Cloud Community Radar</h1>
-<p>Last {s.days} days · generated {now:%Y-%m-%d %H:%M} UTC · {escape(sources)}</p></header>
+<header><h1>Public Cloud Community Radar{escape(" · " + SOURCE_NAMES.get(s.source, s.source)) if s.source else ""}</h1>
+<p>Last {s.days} days · generated {now:%Y-%m-%d %H:%M} UTC · {escape(sources)}</p>{demo_note}</header>
 <section class=kpis>{kpi_html}</section>
 <h2>Where the conversation is</h2><div class="card bars">{bars or "<span class=muted>No activity.</span>"}</div>
 <h2>Top irritants to bring to product teams</h2><div class=grid>{irritants}</div>
@@ -203,7 +235,7 @@ milestones, linked pull requests), not only from comments.</p>
 <h2>Most wanted on the roadmap</h2>
 <table><tr><th>Request</th><th>Votes</th><th>Comments</th><th>Labels</th></tr>{requests}</table>
 <p class=note>Sources: community.ovhcloud.com (Public Cloud), github.com/ovh/public-cloud-roadmap,
-ovh/terraform-provider-ovh, ovh/ovhcloud-cli,{" Reddit r/ovh," if s.reddit else ""} github.com/ovh/docs. Independent project built on public
+ovh/terraform-provider-ovh, ovh/ovhcloud-cli,{" Reddit r/ovh," if s.reddit else ""}{f" Discord server « {escape(s.discord_name or 'unnamed')} »{' (fictional demo data)' if s.discord_demo else ''}," if s.discord else ""} github.com/ovh/docs. Independent project built on public
 data, not affiliated with OVHcloud.</p>{errors}
 </main></body></html>"""
 

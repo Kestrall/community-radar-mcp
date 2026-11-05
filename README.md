@@ -17,6 +17,7 @@ guide, report irritants to product teams with data, and turn recurring questions
 | Public roadmap | [ovh/public-cloud-roadmap](https://github.com/ovh/public-cloud-roadmap) | requests, product labels, 👍 votes, shipped/closed state |
 | GitHub issues | [ovh/terraform-provider-ovh](https://github.com/ovh/terraform-provider-ovh), [ovh/ovhcloud-cli](https://github.com/ovh/ovhcloud-cli) | bug reports and questions from IaC/CLI users |
 | Reddit | [r/ovh](https://www.reddit.com/r/ovh) | newest posts, through the official API, only when approved credentials are set |
+| Discord | a server the radar's bot was invited to (e.g. the OVHcloud Discord) | forum posts, threads and questions asked in text channels with their replies, staff recognised by role |
 | Official guides | [ovh/docs](https://github.com/ovh/docs) | ~500 Public Cloud guides, indexed for search (bundled, rebuildable) |
 
 Every thread is classified by **product** (Compute, Managed Kubernetes, Object Storage, Block Storage, Network,
@@ -26,6 +27,9 @@ security, feature request, question), in English and French.
 Reddit requires approved access to its Data API
 ([Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy)),
 so the radar does not scrape it: the channel stays off until credentials are configured.
+
+Discord works the same way: no scraping, no user account, only a read-only bot that the server admins invited
+(see [Discord](#discord)).
 
 ## Tools
 
@@ -39,7 +43,7 @@ so the radar does not scrape it: the channel stays off until credentials are con
 | `roadmap_status` | answer "is this planned?" with matching roadmap items, their state and votes |
 | `search_docs` | point a user to the right official guide (English or French link) |
 | `content_gaps` | list community questions no guide clearly covers: tutorial and FAQ candidates |
-| `thread_context` | read a whole forum topic or GitHub issue (staff flagged) with its follow-up status, related guides and roadmap items, before drafting a reply |
+| `thread_context` | read a whole forum topic, GitHub issue or Discord conversation (staff flagged) with its follow-up status, related guides and roadmap items, before drafting a reply |
 
 ### Follow-ups: beyond "unanswered"
 
@@ -95,11 +99,34 @@ Then ask, for example:
 - "Is Karpenter support for Managed Kubernetes on the roadmap, and how many people want it?"
 - "Which tutorial is missing from the docs, judging by the forum?"
 
+## Discord
+
+Most developer communities live on Discord, and questions asked there never reach a forum or a ticket. The radar
+reads a server through the official REST API with a bot token, read-only, and only where the server admins let it:
+
+1. Create an application on the [Discord developer portal](https://discord.com/developers/applications), add a
+   bot and turn on the **Message Content** intent (without it, Discord hides message text from bots).
+2. The server admins invite it with **View Channels** and **Read Message History** only (permissions `66560`):
+   `https://discord.com/oauth2/authorize?client_id=<application id>&scope=bot&permissions=66560`.
+   Channel permissions decide what it sees: private channels stay private.
+3. Set `DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID` (server id: Developer Mode, right-click the server, Copy ID).
+
+What becomes a thread for the radar:
+
+- **forum channels**: each post, with its title and tags (a tag such as *Solved* or *Résolu* marks it solved);
+- **threads** opened from a message in a text channel;
+- **questions in text channels**: a message long enough or asking something, with the replies that point to it.
+  Greetings, bots and system messages are left out.
+
+Staff answers are recognised by role name (`DISCORD_STAFF_ROLES`), which is what `follow_ups` needs to tell a
+community answer from an official one. Nothing is posted, nothing is written to disk: messages stay in the
+in-memory cache. The bot needs no gateway connection, so there is no extra process to run.
+
 ## Report and digest
 
 Over HTTP the server also serves, next to `/mcp`:
 
-- `GET /report?days=7`: a standalone HTML report (KPIs, conversation by product, top irritants, questions waiting
+- `GET /report?days=7&source=discord`: a standalone HTML report (`source` optional: forum, github, roadmap, reddit or discord) (KPIs, conversation by product, top irritants, questions waiting
   for an answer, content gaps, most wanted roadmap items), light and dark mode.
 - `GET /digest.json?days=7`: the same snapshot as Telegram-ready messages, used by an n8n workflow that posts the
   weekly digest every Monday.
@@ -113,6 +140,12 @@ From the shell: `community-radar report --days 7 -o radar.html`, `community-rada
 |---|---|---|
 | `GITHUB_TOKEN` | – | classic token **without any scope** (public data, 5,000 requests/hour). Fine-grained tokens hide cross-references in issue timelines, so linked pull requests go unseen |
 | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | – | Reddit "script" app for the official API; the Reddit channel is off without them |
+| `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID` | – | bot token and server id; the Discord channel is off without them |
+| `DISCORD_CHANNELS` | all readable | comma-separated channel names or ids to watch |
+| `DISCORD_STAFF_ROLES` | `staff\|team\|ovhcloud\|admin\|modo\|moderat` | regular expression on role names that mark staff answers |
+| `DISCORD_INCLUDE_WEBHOOKS` | `false` | count webhook posts as members (demo servers only: elsewhere webhooks are feeds) |
+| `DISCORD_DEMO` | `false` | mark Discord threads as fictional demo data (badge and banner in the report, `demo` in tool results) |
+| `DISCORD_PAGES` | `5` | pages read per channel (100 messages or 50 archived posts each) |
 | `RADAR_CACHE_TTL` | `900` | cache for community data, in seconds (the full roadmap is cached 6 h) |
 | `RADAR_DOCS_INDEX` | bundled | path to a guide index rebuilt with `community-radar build-docs` |
 | `RADAR_HOST`, `RADAR_PORT` | `127.0.0.1`, `8000` | HTTP transport |

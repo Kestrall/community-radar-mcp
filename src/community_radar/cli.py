@@ -15,7 +15,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from .docs import DocsIndex, build_index
-from .report import render_html, render_telegram, snapshot
+from .report import SOURCE_NAMES, render_html, render_telegram, snapshot
 from .server import create_server
 from .sources import USER_AGENT, Collector
 
@@ -32,7 +32,10 @@ def add_routes(server: MCPServer, collector: Collector, docs: DocsIndex) -> None
 
     @server.custom_route("/report", methods=["GET"])
     async def report(request: Request) -> Response:
-        return HTMLResponse(render_html(await snapshot(collector, docs, _days(request))))
+        source = request.query_params.get("source") or None
+        if source and source not in SOURCE_NAMES:
+            return JSONResponse({"error": f"source must be one of {', '.join(SOURCE_NAMES)}"}, status_code=400)
+        return HTMLResponse(render_html(await snapshot(collector, docs, _days(request), source)))
 
     @server.custom_route("/digest.json", methods=["GET"])
     async def digest(request: Request) -> Response:

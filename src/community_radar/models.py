@@ -28,6 +28,7 @@ class Thread:
     staff_author: bool = False  # opened by a maintainer (internal work item, not a community question)
     products: list[str] = field(default_factory=list)
     signals: list[str] = field(default_factory=list)
+    demo: bool = False  # fictional data from a demo server, never to be mixed up with real community signals
 
     @property
     def engagement(self) -> float:

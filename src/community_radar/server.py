@@ -21,7 +21,8 @@ from .sources import FORUM, ISSUE_REPOS, ROADMAP_REPO, SUBREDDIT, Collector, Rat
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 INSTRUCTIONS = (
     "Community radar for OVHcloud Public Cloud: the official forum (community.ovhcloud.com), GitHub issues "
-    "(public roadmap, Terraform provider, ovhcloud-cli), Reddit r/ovh when enabled, plus the official guides. "
+    "(public roadmap, Terraform provider, ovhcloud-cli), Reddit r/ovh and the Discord server when enabled, plus "
+    "the official guides. "
     "Use community_pulse for metrics, find_irritants for pain points to report to product teams, "
     "unanswered_questions to triage, follow_ups to find threads where OVHcloud owes the user a message (fix "
     "merged or work in progress but nobody told the reporter, conversation waiting on us), thread_context "
@@ -48,6 +49,7 @@ class ThreadOut(BaseModel):
     products: list[str]
     signals: list[str]
     excerpt: str
+    demo: bool = False
 
     @classmethod
     def of(cls, t: Thread) -> ThreadOut:
@@ -68,6 +70,7 @@ class ThreadOut(BaseModel):
             products=[label(p) for p in t.products],
             signals=t.signals,
             excerpt=t.excerpt[:200],
+            demo=t.demo,
         )
 
 
@@ -280,7 +283,7 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
     ) -> list[ThreadOut]:
         """Keyword search across community threads (titles, excerpts, labels).
 
-        source: forum, github, roadmap or reddit.
+        source: forum, github, roadmap, reddit or discord.
         """
         threads = analytics.window(await collector.threads(), days)
         if source:
@@ -328,7 +331,8 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
 
     @mcp.tool(annotations=READ_ONLY)
     async def thread_context(url: str) -> ContextOut:
-        """Everything needed to draft a reply to a forum topic or GitHub issue: the full conversation (who is
+        """Everything needed to draft a reply to a forum topic, GitHub issue or Discord conversation: the full
+        conversation (who is
         staff), the follow-up status (linked pull requests, milestone, what the user is waiting for), the closest
         official guides and related roadmap items. Drafting only: nothing is posted."""
         now = datetime.now(UTC)
@@ -349,8 +353,33 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
             staff = followup.maintainers(events, thread.author)
             for p in posts[1:]:
                 p.staff = p.staff or p.author in staff
+        elif chat := re.search(r"discord(?:app)?\.com/channels/\d+/(\d+)(?:/(\d+))?", url):
+            if not collector.discord_enabled:
+                raise ToolError("Discord is not configured: set DISCORD_BOT_TOKEN and DISCORD_GUILD_ID.")
+            thread_id = f"{chat.group(1)}/{chat.group(2) or chat.group(1)}"
+            try:
+                posts = await collector.discord_topic(thread_id)
+            except (ValueError, httpx.HTTPStatusError) as exc:
+                raise ToolError(f"Could not read this Discord conversation: {exc}") from exc
+            if not posts:
+                raise ToolError("This Discord conversation is empty or not readable by the bot.")
+            known = {t.id: t for t in await collector.threads() if t.source == "discord"}
+            thread = known.get(thread_id) or Thread(
+                "discord",
+                thread_id,
+                posts[0].text.splitlines()[0][:120] if posts[0].text else "Discord conversation",
+                url,
+                posts[0].created,
+                posts[-1].created,
+                posts[0].text[:300],
+                posts[0].author,
+            )
+            status = followup.assess_forum(thread, posts, now, min_days=0)
         else:
-            raise ToolError("Supported URLs: community.ovhcloud.com/t/... and github.com/<owner>/<repo>/issues/<n>")
+            raise ToolError(
+                "Supported URLs: community.ovhcloud.com/t/..., github.com/<owner>/<repo>/issues/<n> and "
+                "discord.com/channels/<server>/<channel>[/<message>]"
+            )
         related_docs = docs.search(f"{thread.title} {thread.excerpt[:120]}", 3)
         related_roadmap = analytics.search_threads(await collector.roadmap(), thread.title)[:3]
         return ContextOut(
@@ -369,6 +398,11 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
             f"- Forum, Public Cloud category: {FORUM}/c/public-cloud/11\n"
             f"- Public roadmap: https://github.com/{ROADMAP_REPO}\n{repos}\n"
             + (f"- Reddit: https://www.reddit.com/r/{SUBREDDIT}\n" if collector.reddit_enabled else "")
+            + (
+                f"- Discord: server {collector.discord.guild}, through an invited read-only bot\n"
+                if collector.discord_enabled
+                else ""
+            )
             + f"- Official guides: https://github.com/ovh/docs ({len(docs.guides)} Public Cloud guides indexed)\n"
         )
 

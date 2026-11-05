@@ -167,7 +167,7 @@ nav.top{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 18px}
 nav.top a{padding:6px 12px;border-radius:8px;color:var(--muted);font-weight:600}
 nav.top a.on{background:var(--accent-soft);color:var(--accent)}
 .platforms{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:16px 0 0}
-.platforms b{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-right:6px}
+.platforms b{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;width:84px;flex:none}
 .pf{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:16px;padding:4px 12px;font-size:13px}
 .pf.on{background:var(--accent);border-color:var(--accent);color:#fff;text-decoration:none}
 .badge.ok,.badge.fixed_untold{background:var(--good-soft);color:var(--good)}

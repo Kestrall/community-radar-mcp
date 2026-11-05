@@ -16,7 +16,7 @@ from .triage import OPEN, STATUSES, TEAMS, Queue, build_queue
 QUEUE_CSS = """
 .filters{display:flex;flex-direction:column;gap:10px;margin:20px 0 14px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-.chips b{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;width:70px}
+.chips b{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;width:84px;flex:none}
 .chip{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:16px;padding:4px 11px;
 font:inherit;font-size:13px;cursor:pointer}.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .chip small{opacity:.7;margin-left:4px}
@@ -161,7 +161,7 @@ def render_queue(queue: Queue, days: int, demo_server: str = "") -> str:
             f'data-activity="{int(i.new_activity)}" data-open="{int(i.needs_action)}" data-products="{escape(",".join(t.products))}" '
             f'data-text="{escape(text)}">'
             f"<td><span class=src>{escape(SOURCE_NAMES.get(t.source, t.source))}</span> "
-            f'<span class=muted>{escape(t.channel)}</span><br><a href="{escape(t.url)}" target=_blank rel=noopener>'
+            f'<span class=muted>{escape(t.channel.removeprefix("discord "))}</span><br><a href="{escape(t.url)}" target=_blank rel=noopener>'
             f"{escape(t.title)}</a> {badges}{hint}</td>"
             f"<td>{escape(', '.join(label(p) for p in t.products[:2]) or '–')}</td>"
             f"<td>{_age(t.last_activity, now)}</td><td class=cell-status>{status}</td>"

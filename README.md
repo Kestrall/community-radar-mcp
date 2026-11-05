@@ -1,13 +1,55 @@
 # community-radar-mcp
 
-An MCP server that gives an AI assistant a live view of the **OVHcloud Public Cloud community**: what users ask,
-what hurts, what is waiting for an answer, what is already on the roadmap, and which questions the official
-documentation does not cover yet.
+[![CI](https://github.com/Kestrall/community-radar-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Kestrall/community-radar-mcp/actions/workflows/ci.yml)
+![Python 3.12 | 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB?logo=python&logoColor=white)
+![MCP server](https://img.shields.io/badge/MCP-server-6E56CF)
+![Coverage ≥ 90%](https://img.shields.io/badge/coverage-%E2%89%A5%2090%25%20%28enforced%20in%20CI%29-2EA44F)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+An MCP server and a dashboard that give a community team, and its AI assistant, a live view of the
+**OVHcloud Public Cloud community**: what users ask, what hurts, who is still waiting for an answer, what is already
+on the roadmap, and which questions the official documentation does not cover yet.
 
 It is built for the daily work of a Tech Community Manager / Developer Advocate: triage, answer with the right
-guide, report irritants to product teams with data, and turn recurring questions into tutorials.
+guide, report irritants to product teams with data, follow up when a fix ships, and turn recurring questions into
+tutorials.
 
 > Independent project built on public data. Not affiliated with or endorsed by OVHcloud.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/report-dark.png">
+  <img alt="Community Radar report: KPIs, conversation by product, top irritants, period and platform filters" src="docs/img/report-light.png">
+</picture>
+
+## Highlights
+
+- **Every channel in one place**: the official forum, the public roadmap, the Terraform provider and CLI issues,
+  Discord through an invited read-only bot, Reddit, and ~500 official guides. Each thread is classified by product
+  and signal (incident, bug, billing, security, feature request, question), in English and French.
+- **Follow-ups, not just "unanswered"**: reads GitHub issue timelines to catch a fix that was merged while nobody
+  told the reporter, work in progress nobody talks about, issues closed without a word, users waiting on us.
+- **A triage queue with history**: statuses (new, in progress, escalated to Support / Product / Engineering /
+  Docs, waiting on user, answered, resolved, dismissed), notes and a full log. Handled threads come back on top when
+  the community writes again.
+- **Irritant reports and tutorial ideas** for product and docs teams, with the threads as evidence.
+- **Built for an assistant**: 11 MCP tools and 3 prompts, so Claude (or any MCP client) can triage, draft an
+  on-brand reply with the right guide, or write the weekly note for product managers. It drafts; it never posts.
+- **Plays by the rules**: official APIs only, read-only bots on invitation, no scraping, demo data clearly marked.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    forum["Forum (Discourse API)"] --> radar
+    github["GitHub: roadmap, Terraform, CLI"] --> radar
+    discord["Discord (invited read-only bot)"] --> radar
+    ingest["Other channels via n8n → POST /ingest"] --> radar
+    docs["Official guides (ovh/docs)"] --> radar
+    radar["Collector + classifier + follow-up analysis"] --> mcp["11 MCP tools → AI assistant"]
+    radar --> report["/report and weekly digest"]
+    radar --> triage["/triage queue + SQLite history"]
+```
 
 ## What it watches
 
@@ -16,7 +58,7 @@ guide, report irritants to product teams with data, and turn recurring questions
 | Forum | [community.ovhcloud.com](https://community.ovhcloud.com/c/public-cloud/11), Public Cloud category (Discourse JSON API) | topics, replies, views, likes, accepted answers, staff replies |
 | Public roadmap | [ovh/public-cloud-roadmap](https://github.com/ovh/public-cloud-roadmap) | requests, product labels, 👍 votes, shipped/closed state |
 | GitHub issues | [ovh/terraform-provider-ovh](https://github.com/ovh/terraform-provider-ovh), [ovh/ovhcloud-cli](https://github.com/ovh/ovhcloud-cli) | bug reports and questions from IaC/CLI users |
-| Reddit | [r/ovh](https://www.reddit.com/r/ovh) | newest posts, through the official API, only when approved credentials are set |
+| Reddit | [r/ovh](https://www.reddit.com/r/ovh) | newest posts through the official API when approved credentials are set, or pushed by your own collector to [`/ingest`](#importing-other-channels) (Public Cloud threads only) |
 | Discord | a server the radar's bot was invited to (e.g. the OVHcloud Discord) | forum posts, threads and questions asked in text channels with their replies, staff recognised by role |
 | Official guides | [ovh/docs](https://github.com/ovh/docs) | ~500 Public Cloud guides, indexed for search (bundled, rebuildable) |
 
@@ -26,7 +68,7 @@ security, feature request, question), in English and French.
 
 Reddit requires approved access to its Data API
 ([Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy)),
-so the radar does not scrape it: the channel stays off until credentials are configured.
+so the radar does not scrape it: the API channel stays off until credentials are configured.
 
 Discord works the same way: no scraping, no user account, only a read-only bot that the server admins invited
 (see [Discord](#discord)).
@@ -138,6 +180,11 @@ Over HTTP the server also serves, next to `/mcp`:
 From the shell: `community-radar report --days 7 -o radar.html`, `community-radar digest --days 7`.
 
 ## Triage queue
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/triage-dark.png">
+  <img alt="Triage queue: period, platform and status filters, radar hints, escalated thread back on top with new activity" src="docs/img/triage-light.png">
+</picture>
 
 `GET /triage` is the community team's queue: every thread the radar sees, filterable by platform, status, product
 and text, with its status, owner team and full history (who changed what, when, with which note).

@@ -11,14 +11,17 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
-from . import analytics, followup
+from . import analytics, followup, triage
 from .docs import DocsIndex
 from .models import Guide, Thread
 from .products import PRODUCTS, SIGNALS, label
 from .products import resolve_product as _resolve_product
+from .queue_page import find_thread, load_queue
 from .sources import FORUM, ISSUE_REPOS, ROADMAP_REPO, SUBREDDIT, Collector, RateLimited
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
+# Writes to the radar's own triage store only: nothing is posted on the community platforms.
+TRIAGE_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 INSTRUCTIONS = (
     "Community radar for OVHcloud Public Cloud: the official forum (community.ovhcloud.com), GitHub issues "
     "(public roadmap, Terraform provider, ovhcloud-cli), Reddit r/ovh and the Discord server when enabled, plus "
@@ -28,7 +31,9 @@ INSTRUCTIONS = (
     "merged or work in progress but nobody told the reporter, conversation waiting on us), thread_context "
     "before drafting a reply, roadmap_status to check whether "
     "a request is already tracked, search_docs to point users to the right guide and content_gaps to find "
-    "tutorial ideas. Always cite thread and guide URLs. Never claim something was posted: you only draft."
+    "tutorial ideas. triage_queue lists the team's queue (status, owner team, new activity on handled threads) "
+    "and update_triage records a status change with a note, only when the user asks for it. Always cite thread and "
+    "guide URLs. Never claim something was posted: you only draft."
 )
 
 
@@ -181,6 +186,43 @@ class FollowUpOut(BaseModel):
             milestone=f.milestone,
             assignees=f.assignees,
         )
+
+
+class TriageItemOut(BaseModel):
+    thread: ThreadOut
+    status: str
+    status_label: str
+    team: str | None
+    assignee: str | None
+    note: str
+    updated: datetime | None
+    new_activity: bool
+    radar_hint: str
+
+
+class TriageQueueOut(BaseModel):
+    days: int
+    counts: dict[str, int]
+    new_activity: int
+    items: list[TriageItemOut]
+
+
+class TriageEventOut(BaseModel):
+    at: datetime
+    actor: str
+    from_status: str
+    to_status: str
+    team: str | None
+    assignee: str | None
+    note: str
+
+
+class TriageUpdateOut(BaseModel):
+    url: str
+    status: str
+    team: str | None
+    assignee: str | None
+    history: list[TriageEventOut]
 
 
 class ContextOut(BaseModel):
@@ -390,6 +432,75 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
             related_roadmap=[ThreadOut.of(t) for t in related_roadmap if t.url != thread.url],
         )
 
+    @mcp.tool(annotations=READ_ONLY)
+    async def triage_queue(
+        status: str | None = None, source: str | None = None, days: int = 30, limit: int = 20
+    ) -> TriageQueueOut:
+        """The community team's queue: every thread with its triage status (new, in_progress, escalated,
+        waiting_user, answered, resolved, dismissed), owner team, last note and the radar's follow-up hint. Threads
+        where the community wrote again after we handled them come first, flagged new_activity.
+
+        status: a status, "open" (what the community team should handle: new or in progress, roadmap wishes and
+        maintainers' own issues left out unless the radar flags them, plus new activity) or "activity".
+        source: forum, github, roadmap, discord or reddit.
+        """
+        queue = await load_queue(collector, max(1, min(days, 180)))
+        items = queue.items
+        if source:
+            items = [i for i in items if i.thread.source == source.lower()]
+        if status == "open":
+            items = [i for i in items if i.needs_action]
+        elif status == "activity":
+            items = [i for i in items if i.new_activity]
+        elif status:
+            if status not in triage.STATUSES:
+                raise ToolError(f"status must be open, activity or one of: {', '.join(triage.STATUSES)}")
+            items = [i for i in items if i.status == status]
+        return TriageQueueOut(
+            days=days,
+            counts=queue.counts,
+            new_activity=queue.new_activity,
+            items=[
+                TriageItemOut(
+                    thread=ThreadOut.of(i.thread),
+                    status=i.status,
+                    status_label=i.label,
+                    team=i.team,
+                    assignee=i.assignee,
+                    note=i.note,
+                    updated=i.updated,
+                    new_activity=i.new_activity,
+                    radar_hint=i.hint,
+                )
+                for i in items[: _cap(limit)]
+            ],
+        )
+
+    @mcp.tool(annotations=TRIAGE_WRITE)
+    async def update_triage(
+        url: str, status: str, note: str = "", team: str | None = None, assignee: str | None = None
+    ) -> TriageUpdateOut:
+        """Record a triage decision on a thread, in the radar only (nothing is posted on the platform). Use it when
+        the user asks, e.g. "escalate this to the product team" or "mark it answered".
+
+        status: new, in_progress, escalated (needs team), waiting_user, answered, resolved, dismissed (needs a note).
+        team: support, product, engineering or docs.
+        """
+        thread = await find_thread(collector, url)
+        if not thread:
+            raise ToolError("Unknown thread: use a URL returned by the radar (triage_queue, search_threads…).")
+        try:
+            ticket = collector.triage.update(thread, status, note, team, assignee, actor="assistant (MCP)")
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        return TriageUpdateOut(
+            url=ticket.url,
+            status=ticket.status,
+            team=ticket.team,
+            assignee=ticket.assignee,
+            history=[TriageEventOut(**vars(e)) for e in collector.triage.history(ticket.url)],
+        )
+
     @mcp.resource("radar://sources", mime_type="text/markdown")
     def sources_resource() -> str:
         """Channels watched by the radar."""
@@ -402,6 +513,9 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
                 f"- Discord: server {collector.discord.guild}, through an invited read-only bot\n"
                 if collector.discord_enabled
                 else ""
+            )
+            + "".join(
+                f"- {channel}: imported by an external collector\n" for channel in collector.inbox.channels().values()
             )
             + f"- Official guides: https://github.com/ovh/docs ({len(docs.guides)} Public Cloud guides indexed)\n"
         )

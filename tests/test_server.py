@@ -30,6 +30,8 @@ async def test_lists_tools_prompts_and_resources(collector, docs):
         "search_docs",
         "content_gaps",
         "thread_context",
+        "triage_queue",
+        "update_triage",
     }
     assert prompts == {"weekly_report", "draft_reply", "tutorial_from_gap"}
     assert "3 Public Cloud guides" in sources and "`kubernetes`" in taxonomy

@@ -15,8 +15,10 @@ from typing import Any
 import httpx
 
 from .discord_source import DiscordSource, display_name, snowflake_time
+from .inbox import Inbox
 from .models import Thread
-from .products import classify
+from .products import classify, in_public_cloud
+from .triage import TriageStore
 
 USER_AGENT = "community-radar-mcp/0.1 (+https://github.com/Kestrall/community-radar-mcp)"
 FORUM = "https://community.ovhcloud.com"
@@ -106,6 +108,10 @@ class Collector:
         self.reddit_enabled = bool(self.reddit_id and self.reddit_secret)
         # Discord only through a bot invited by the server admins: off without DISCORD_BOT_TOKEN/DISCORD_GUILD_ID.
         self.discord = DiscordSource(self.client)
+        # Threads pushed by an external collector through POST /ingest (see inbox.py).
+        self.inbox = Inbox.from_env()
+        # Triage statuses and history (RADAR_TRIAGE_PATH: SQLite file; in memory when unset).
+        self.triage = TriageStore(os.getenv("RADAR_TRIAGE_PATH"))
         self.errors: dict[str, str] = {}
 
     # --- HTTP helpers -------------------------------------------------------------------------
@@ -322,7 +328,10 @@ class Collector:
         if self.discord_enabled:
             fetches.append(guarded("discord", lambda: self.discord.threads(since)))
         batches = await asyncio.gather(*fetches)
-        return [t for batch in batches for t in batch]
+        live = {t.source for batch in batches for t in batch} | ({"reddit"} if self.reddit_enabled else set())
+        # Imported channels cover every OVHcloud product: keep the Public Cloud threads only.
+        imported = [t for t in self.inbox.threads() if t.source not in live and in_public_cloud(t)]
+        return [t for batch in batches for t in batch] + imported
 
     async def roadmap(self, refresh: bool = False) -> list[Thread]:
         """The whole public roadmap (open and closed issues), cached longer: it changes slowly."""

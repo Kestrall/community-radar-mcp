@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from .docs import DocsIndex, build_index
+from .queue_page import find_thread, load_queue, render_queue
 from .report import SOURCE_NAMES, render_html, render_telegram, snapshot
 from .server import create_server
 from .sources import USER_AGENT, Collector
@@ -40,6 +42,82 @@ def add_routes(server: MCPServer, collector: Collector, docs: DocsIndex) -> None
     @server.custom_route("/digest.json", methods=["GET"])
     async def digest(request: Request) -> Response:
         return JSONResponse({"messages": render_telegram(await snapshot(collector, docs, _days(request)))})
+
+    @server.custom_route("/triage", methods=["GET"])
+    async def triage_page(request: Request) -> Response:
+        days = _days(request, 30)
+        demo = collector.discord.guild_name if collector.discord.demo else ""
+        refresh = request.query_params.get("refresh") == "1"  # skip the cache, e.g. right after a demo message
+        return HTMLResponse(render_queue(await load_queue(collector, days, refresh), days, demo))
+
+    @server.custom_route("/api/triage/history", methods=["GET"])
+    async def triage_history(request: Request) -> Response:
+        events = collector.triage.history(request.query_params.get("url", ""))
+        return JSONResponse(
+            [
+                {
+                    "at": e.at.isoformat(),
+                    "actor": e.actor,
+                    "from_status": e.from_status,
+                    "to_status": e.to_status,
+                    "team": e.team,
+                    "assignee": e.assignee,
+                    "note": e.note,
+                }
+                for e in events
+            ]
+        )
+
+    @server.custom_route("/api/triage", methods=["POST"])
+    async def triage_update(request: Request) -> Response:
+        # A custom header and a JSON body force a CORS preflight, which this server never grants: another website
+        # open in the same browser cannot change statuses behind the user's back.
+        if request.headers.get("x-radar-triage") != "1" or not request.headers.get("content-type", "").startswith(
+            "application/json"
+        ):
+            return JSONResponse({"error": "JSON with the X-Radar-Triage header expected"}, status_code=400)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("JSON object expected")
+            thread = await find_thread(collector, str(body.get("url", "")))
+            if not thread:
+                return JSONResponse({"error": "unknown thread (not seen by the radar)"}, status_code=404)
+            ticket = collector.triage.update(
+                thread,
+                str(body.get("status", "")),
+                note=str(body.get("note") or ""),
+                team=str(body["team"]) if body.get("team") else None,
+                assignee=str(body["assignee"]) if body.get("assignee") else None,
+                actor=str(body.get("actor") or ""),
+            )
+        except (ValueError, json.JSONDecodeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(
+            {
+                "status": ticket.status,
+                "team": ticket.team,
+                "assignee": ticket.assignee,
+                "updated": ticket.updated.isoformat(),
+            }
+        )
+
+    @server.custom_route("/ingest", methods=["POST"])
+    async def ingest(request: Request) -> Response:
+        """Threads pushed by an external collector (n8n…): Authorization: Bearer $RADAR_INGEST_TOKEN."""
+        token = os.getenv("RADAR_INGEST_TOKEN", "")
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not token:
+            return JSONResponse({"error": "ingestion is off: set RADAR_INGEST_TOKEN"}, status_code=404)
+        if not hmac.compare_digest(given.encode(), token.encode()):
+            return JSONResponse({"error": "invalid token"}, status_code=401)
+        if int(request.headers.get("content-length") or 0) > 2_000_000:
+            return JSONResponse({"error": "payload too large"}, status_code=413)
+        try:
+            result = collector.inbox.ingest(await request.json())
+        except (ValueError, json.JSONDecodeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(result)
 
     @server.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> Response:

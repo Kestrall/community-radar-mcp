@@ -43,6 +43,8 @@ Discord works the same way: no scraping, no user account, only a read-only bot t
 | `roadmap_status` | answer "is this planned?" with matching roadmap items, their state and votes |
 | `search_docs` | point a user to the right official guide (English or French link) |
 | `content_gaps` | list community questions no guide clearly covers: tutorial and FAQ candidates |
+| `triage_queue` | the team's queue: status, owner team, notes, threads with new activity first |
+| `update_triage` | record a triage decision (status, team, note) in the radar, never on the platform |
 | `thread_context` | read a whole forum topic, GitHub issue or Discord conversation (staff flagged) with its follow-up status, related guides and roadmap items, before drafting a reply |
 
 ### Follow-ups: beyond "unanswered"
@@ -130,9 +132,50 @@ Over HTTP the server also serves, next to `/mcp`:
   for an answer, content gaps, most wanted roadmap items), light and dark mode.
 - `GET /digest.json?days=7`: the same snapshot as Telegram-ready messages, used by an n8n workflow that posts the
   weekly digest every Monday.
+- `POST /ingest`: threads pushed by an external collector, see below.
 - `GET /health`
 
 From the shell: `community-radar report --days 7 -o radar.html`, `community-radar digest --days 7`.
+
+## Triage queue
+
+`GET /triage` is the community team's queue: every thread the radar sees, filterable by platform, status, product
+and text, with its status, owner team and full history (who changed what, when, with which note).
+
+| Status | Meaning |
+|---|---|
+| `new` | not triaged yet (default) |
+| `in_progress` | someone is on it |
+| `escalated` | handed to Support, Product, Engineering or Docs, waiting for their answer (team required) |
+| `waiting_user` | we asked the user for details |
+| `answered` | we replied, not confirmed solved |
+| `resolved` | solved, nothing left to do |
+| `dismissed` | duplicate, off-topic or spam (note required) |
+
+The radar keeps watching handled threads: when the community writes again on a thread that is escalated, waiting on
+the user, answered, resolved or dismissed, it comes back to the top flagged **new activity**. Each thread also shows
+the radar's follow-up hint (fix merged but reporter not told, waiting on us…).
+
+From an assistant: `triage_queue` lists the queue, `update_triage` records a decision ("escalate this to the product
+team with this note"). Statuses live in the radar only: nothing is ever posted on the platforms. Status changes need
+a JSON body and an `X-Radar-Triage` header, so another website open in the same browser cannot forge them.
+
+## Importing other channels
+
+Some channels are better collected outside the radar, by a tool you already run (an n8n workflow, a cron job), under
+your own responsibility for each platform's terms. Push them to `POST /ingest` with
+`Authorization: Bearer $RADAR_INGEST_TOKEN`:
+
+```json
+{"source": "stackoverflow", "channel": "Stack Overflow [ovh]", "items": [
+  {"id": "79123456", "title": "…", "url": "https://stackoverflow.com/q/79123456", "created": "2026-11-05T08:00:00Z",
+   "author": "…", "text": "…", "replies": 2, "score": 3, "labels": ["kubernetes"]}
+]}
+```
+
+Threads are validated, deduplicated by id, classified like every other channel and kept 120 days. They appear in
+every tool and in the report, marked as imported. `forum`, `github`, `roadmap` and `discord` are reserved, and an
+imported `reddit` channel is hidden as soon as the official Reddit API is configured.
 
 ## Configuration
 
@@ -146,6 +189,9 @@ From the shell: `community-radar report --days 7 -o radar.html`, `community-rada
 | `DISCORD_INCLUDE_WEBHOOKS` | `false` | count webhook posts as members (demo servers only: elsewhere webhooks are feeds) |
 | `DISCORD_DEMO` | `false` | mark Discord threads as fictional demo data (badge and banner in the report, `demo` in tool results) |
 | `DISCORD_PAGES` | `5` | pages read per channel (100 messages or 50 archived posts each) |
+| `RADAR_INGEST_TOKEN` | – | enables `POST /ingest` for threads pushed by an external collector (bearer token) |
+| `RADAR_INBOX_PATH` | in memory | JSON file that keeps imported threads (120 days) |
+| `RADAR_TRIAGE_PATH` | in memory | SQLite file that keeps triage statuses and their history |
 | `RADAR_CACHE_TTL` | `900` | cache for community data, in seconds (the full roadmap is cached 6 h) |
 | `RADAR_DOCS_INDEX` | bundled | path to a guide index rebuilt with `community-radar build-docs` |
 | `RADAR_HOST`, `RADAR_PORT` | `127.0.0.1`, `8000` | HTTP transport |

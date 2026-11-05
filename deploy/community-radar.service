@@ -13,6 +13,8 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# Writable state: threads imported through /ingest (RADAR_INBOX_PATH).
+StateDirectory=community-radar
 
 [Install]
 WantedBy=multi-user.target

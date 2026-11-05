@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html import escape
 
@@ -33,6 +33,7 @@ class Snapshot:
     errors: dict[str, str]
     reddit: bool = False
     discord: bool = False
+    imported: dict[str, str] = field(default_factory=dict)  # channels pushed through /ingest, by source
     discord_name: str = ""
     discord_demo: bool = False
     source: str | None = None  # report restricted to one channel (forum, github, roadmap, reddit, discord)
@@ -54,9 +55,41 @@ async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7, source:
         errors=dict(collector.errors),
         reddit=collector.reddit_enabled,
         discord=collector.discord_enabled,
+        imported={
+            k: v for k, v in collector.inbox.channels().items() if not (k == "reddit" and collector.reddit_enabled)
+        },
         discord_name=collector.discord.guild_name,
         discord_demo=collector.discord.demo,
         source=source,
+    )
+
+
+def top_nav(page: str, days: int) -> str:
+    links = [("report", f"/report?days={days}", "Report"), ("triage", f"/triage?days={max(days, 30)}", "Triage")]
+    return (
+        "<nav class=top>"
+        + "".join(f'<a href="{href}" class="{"on" if key == page else ""}">{name}</a>' for key, href, name in links)
+        + "</nav>"
+    )
+
+
+def _platform_links(s: Snapshot) -> str:
+    """Platform filter for the report: one link per channel the radar watches."""
+    sources = ["forum", "github", "roadmap"]
+    if s.discord:
+        sources.append("discord")
+    if s.reddit or "reddit" in s.imported:
+        sources.append("reddit")
+    sources += [k for k in s.imported if k not in sources]
+    links = [(None, "All")] + [(k, SOURCE_NAMES.get(k, k.title())) for k in sources]
+    return (
+        "<div class=platforms><b>Platform</b>"
+        + "".join(
+            f'<a class="pf{" on" if k == s.source else ""}" href="/report?days={s.days}{f"&source={k}" if k else ""}">'
+            f"{escape(name)}</a>"
+            for k, name in links
+        )
+        + "</div>"
     )
 
 
@@ -115,6 +148,13 @@ background:var(--accent-soft);color:var(--accent);white-space:nowrap}
 .badge.bug,.badge.billing{background:var(--warn-soft);color:var(--warn)}
 .badge.demo{background:var(--warn-soft);color:var(--warn);text-transform:uppercase;letter-spacing:.04em}
 .demo-note{margin-top:16px;padding:10px 14px;border-radius:10px;background:var(--warn-soft);color:var(--warn);font-size:14px}
+nav.top{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 18px}
+nav.top a{padding:6px 12px;border-radius:8px;color:var(--muted);font-weight:600}
+nav.top a.on{background:var(--accent-soft);color:var(--accent)}
+.platforms{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:16px 0 0}
+.platforms b{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-right:6px}
+.pf{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:16px;padding:4px 12px;font-size:13px}
+.pf.on{background:var(--accent);border-color:var(--accent);color:#fff;text-decoration:none}
 .badge.ok,.badge.fixed_untold{background:var(--good-soft);color:var(--good)}
 .badge.no_response,.badge.closed_silently{background:var(--bad-soft);color:var(--bad)}
 .badge.silent_progress,.badge.triaged_silently,.badge.waiting_on_us{background:var(--warn-soft);color:var(--warn)}
@@ -221,8 +261,9 @@ def render_html(s: Snapshot) -> str:
     return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>Community Radar</title>
 <style>{CSS}</style></head><body><main>
+{top_nav("report", s.days)}
 <header><h1>Public Cloud Community Radar{escape(" · " + SOURCE_NAMES.get(s.source, s.source)) if s.source else ""}</h1>
-<p>Last {s.days} days · generated {now:%Y-%m-%d %H:%M} UTC · {escape(sources)}</p>{demo_note}</header>
+<p>Last {s.days} days · generated {now:%Y-%m-%d %H:%M} UTC · {escape(sources)}</p>{_platform_links(s)}{demo_note}</header>
 <section class=kpis>{kpi_html}</section>
 <h2>Where the conversation is</h2><div class="card bars">{bars or "<span class=muted>No activity.</span>"}</div>
 <h2>Top irritants to bring to product teams</h2><div class=grid>{irritants}</div>
@@ -235,7 +276,7 @@ milestones, linked pull requests), not only from comments.</p>
 <h2>Most wanted on the roadmap</h2>
 <table><tr><th>Request</th><th>Votes</th><th>Comments</th><th>Labels</th></tr>{requests}</table>
 <p class=note>Sources: community.ovhcloud.com (Public Cloud), github.com/ovh/public-cloud-roadmap,
-ovh/terraform-provider-ovh, ovh/ovhcloud-cli,{" Reddit r/ovh," if s.reddit else ""}{f" Discord server « {escape(s.discord_name or 'unnamed')} »{' (fictional demo data)' if s.discord_demo else ''}," if s.discord else ""} github.com/ovh/docs. Independent project built on public
+ovh/terraform-provider-ovh, ovh/ovhcloud-cli,{" Reddit r/ovh," if s.reddit else ""}{"".join(f" {escape(c)} (imported)," for c in s.imported.values())}{f" Discord server « {escape(s.discord_name or 'unnamed')} »{' (fictional demo data)' if s.discord_demo else ''}," if s.discord else ""} github.com/ovh/docs. Independent project built on public
 data, not affiliated with OVHcloud.</p>{errors}
 </main></body></html>"""
 

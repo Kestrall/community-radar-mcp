@@ -38,4 +38,5 @@ ignore = ["SIM905"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/community_radar/report.py" = ["E501"]
+"src/community_radar/queue_page.py" = ["E501"]
 "tests/test_discord.py" = ["E501"]

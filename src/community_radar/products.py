@@ -27,7 +27,7 @@ PRODUCTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     ),
     "block_storage": (
         "Block & File Storage",
-        r"block storage|\bvolumes?\b|cinder|file storage|\bnfs\b",
+        r"block storage|\bvolumes?\b|cinder|file storage|\bnfs\b|\bbackups?\b|sauvegarde",
         ("Block Storage", "File Storage", "backup"),
     ),
     "network": (
@@ -110,6 +110,15 @@ SIGNALS: dict[str, str] = {
 }
 
 NEGATIVE = ("incident", "bug", "billing", "security")
+# Imported channels (r/ovh…) speak about every OVHcloud product: only Public Cloud threads are kept.
+_PUBLIC_CLOUD = re.compile(r"public cloud|cloud public|\bpci\b|openstack|horizon")
+_OTHER_PRODUCTS = re.compile(
+    r"\bvps\b|dedicated server|serveurs? dedies?|bare ?metal server|kimsufi|so ?you ?start|\beco\b range"
+    r"|\bdomains?\b|\bdomaines?\b|whois|\bdkim\b|registrar|web ?hosting|hebergement web|\bhosting\b|cluster\d{3}"
+    r"|e-?mail pro|exchange|private cloud|vmware|nutanix|\bsms\b|telephon"
+)
+# Billing and IAM cut across every product: on their own they do not place a thread in the Public Cloud.
+_CROSS_CUTTING = {"billing", "iam_security"}
 _LABEL_TO_PRODUCT = {label.lower(): key for key, (_, _, labels) in PRODUCTS.items() for label in labels}
 _PRODUCT_RE = {key: re.compile(pattern) for key, (_, pattern, _) in PRODUCTS.items()}
 _SIGNAL_RE = {key: re.compile(pattern) for key, pattern in SIGNALS.items()}
@@ -144,6 +153,14 @@ def resolve_product(name: str | None) -> str | None:
         if pattern.search(wanted):
             return key
     raise ValueError(f"Unknown product {name!r}. Known products: {', '.join(PRODUCTS)}")
+
+
+def in_public_cloud(thread: Thread) -> bool:
+    """Whether a thread from a channel covering every OVHcloud product is about the Public Cloud."""
+    text = fold(thread.text)
+    if _PUBLIC_CLOUD.search(text):
+        return True
+    return bool(set(thread.products) - _CROSS_CUTTING) and not _OTHER_PRODUCTS.search(text)
 
 
 def classify(thread: Thread) -> Thread:

@@ -9,7 +9,7 @@ from html import escape
 from . import analytics, followup
 from .models import Thread
 from .products import label
-from .report import CSS, SIGNAL_LABELS, SOURCE_NAMES, top_nav
+from .report import CSS, SIGNAL_LABELS, SOURCE_NAMES, period_links, top_nav
 from .sources import Collector
 from .triage import OPEN, STATUSES, TEAMS, Queue, build_queue
 
@@ -185,6 +185,7 @@ def render_queue(queue: Queue, days: int, demo_server: str = "") -> str:
 <header><h1>Triage queue</h1><p>Threads active over the last {days} days · <span id=shown>{len(items)}</span> shown ·
 statuses live in the radar, nothing is posted on the platforms</p>{demo}</header>
 <div class=filters>
+{period_links("/triage", days)}
 <div class=chips><b>Platform</b>{source_chips}</div>
 <div class=chips><b>Status</b>{status_chips}</div>
 <div class=tools>{product_select}<input id=q type=search placeholder="Search title, text, author…">

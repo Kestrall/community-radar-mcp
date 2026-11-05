@@ -65,11 +65,26 @@ async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7, source:
 
 
 def top_nav(page: str, days: int) -> str:
-    links = [("report", f"/report?days={days}", "Report"), ("triage", f"/triage?days={max(days, 30)}", "Triage")]
+    links = [("report", f"/report?days={days}", "Report"), ("triage", f"/triage?days={days}", "Triage")]
     return (
         "<nav class=top>"
         + "".join(f'<a href="{href}" class="{"on" if key == page else ""}">{name}</a>' for key, href, name in links)
         + "</nav>"
+    )
+
+
+PERIODS = (7, 14, 30, 60, 90, 180)
+
+
+def period_links(path: str, days: int, extra: str = "") -> str:
+    """History window selector (days), keeping the other filters (`extra` query string)."""
+    choices = sorted(set(PERIODS) | {days})
+    return (
+        "<div class=platforms><b>Period</b>"
+        + "".join(
+            f'<a class="pf{" on" if d == days else ""}" href="{path}?days={d}{extra}">{d} days</a>' for d in choices
+        )
+        + "</div>"
     )
 
 
@@ -263,7 +278,7 @@ def render_html(s: Snapshot) -> str:
 <style>{CSS}</style></head><body><main>
 {top_nav("report", s.days)}
 <header><h1>Public Cloud Community Radar{escape(" · " + SOURCE_NAMES.get(s.source, s.source)) if s.source else ""}</h1>
-<p>Last {s.days} days · generated {now:%Y-%m-%d %H:%M} UTC · {escape(sources)}</p>{_platform_links(s)}{demo_note}</header>
+<p>Last {s.days} days · generated {now:%Y-%m-%d %H:%M} UTC · {escape(sources)}</p>{period_links("/report", s.days, f"&source={s.source}" if s.source else "")}{_platform_links(s)}{demo_note}</header>
 <section class=kpis>{kpi_html}</section>
 <h2>Where the conversation is</h2><div class="card bars">{bars or "<span class=muted>No activity.</span>"}</div>
 <h2>Top irritants to bring to product teams</h2><div class=grid>{irritants}</div>

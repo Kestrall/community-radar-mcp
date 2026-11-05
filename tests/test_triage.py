@@ -82,7 +82,11 @@ def test_triage_routes(collector, docs):
     page = client.get("/triage?days=30").text
     assert "Triage queue" in page and 'class="on">Triage' in page
     report = client.get("/report?days=7").text
-    assert 'href="/report?days=7&source=github"' in report and 'href="/triage?days=30"' in report
+    assert 'href="/report?days=7&source=github"' in report and 'href="/triage?days=7"' in report
+    assert 'class="pf on" href="/report?days=7">7 days' in report and 'href="/report?days=90">' in report
+    filtered = client.get("/report?days=30&source=github").text
+    assert 'href="/report?days=60&source=github">' in filtered  # the period keeps the platform filter
+    assert 'class="pf on" href="/triage?days=30">30 days' in page
 
 
 async def test_triage_tools(collector, docs):

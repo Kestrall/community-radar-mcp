@@ -33,7 +33,7 @@ def test_ingest_classifies_deduplicates_and_persists(tmp_path):
     assert t.source == "reddit" and t.id == "reddit:t3_abc" and t.channel == "r/ovh"
     assert t.title.endswith("(edited)") and "kubernetes" in t.products and "question" in t.signals
     assert t.answered is None  # an RSS feed does not say whether anyone replied
-    assert Inbox().ingest(batch(replies=3)) and Inbox().channels() == {}
+    assert Inbox().ingest(batch(replies=3)) and Inbox().channels() == []
 
 
 def test_old_threads_expire():

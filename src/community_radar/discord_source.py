@@ -63,24 +63,38 @@ def _title(content: str) -> str:
 class DiscordSource:
     """Reads one Discord server (guild) with a bot token. Off unless DISCORD_BOT_TOKEN and DISCORD_GUILD_ID are set."""
 
-    def __init__(self, client: httpx.AsyncClient, token: str | None = None, guild: str | None = None) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        token: str | None = None,
+        guild: str | None = None,
+        channels: str | None = None,
+        demo: bool | None = None,
+        label: str = "",
+    ) -> None:
         self.client = client
         self.token = token if token is not None else os.getenv("DISCORD_BOT_TOKEN", "")
         self.guild = guild if guild is not None else os.getenv("DISCORD_GUILD_ID", "")
-        wanted = os.getenv("DISCORD_CHANNELS", "")
+        self.label = label
+        wanted = channels if channels is not None else os.getenv("DISCORD_CHANNELS", "")
         self.channel_filter = {c.strip().lstrip("#").lower() for c in wanted.split(",") if c.strip()}
         self.staff_pattern = re.compile(os.getenv("DISCORD_STAFF_ROLES") or DEFAULT_STAFF_ROLES, re.IGNORECASE)
         self.pages = int(os.getenv("DISCORD_PAGES", "5"))
         # Webhook posts are usually feeds (releases, alerts); a demo server can use them to play several members.
         self.include_webhooks = os.getenv("DISCORD_INCLUDE_WEBHOOKS", "").lower() in ("1", "true", "yes")
         # A demo server holds fictional conversations: they are flagged so reports never pass them off as real.
-        self.demo = os.getenv("DISCORD_DEMO", "").lower() in ("1", "true", "yes")
+        self.demo = demo if demo is not None else os.getenv("DISCORD_DEMO", "").lower() in ("1", "true", "yes")
         self.guild_name = ""
         self.enabled = bool(self.token and self.guild)
         self._members: dict[str, bool] = {}
         self._staff_roles: set[str] | None = None
         self._channels: dict[str, dict[str, Any]] = {}
         self._gate = asyncio.Semaphore(4)
+
+    @property
+    def name(self) -> str:
+        """Label set on the Sources page, else the server name read by the bot, else its id."""
+        return self.label or self.guild_name or self.guild
 
     # --- HTTP ---------------------------------------------------------------------------------
 

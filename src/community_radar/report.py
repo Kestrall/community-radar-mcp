@@ -33,9 +33,11 @@ class Snapshot:
     errors: dict[str, str]
     reddit: bool = False
     discord: bool = False
-    imported: dict[str, str] = field(default_factory=dict)  # channels pushed through /ingest, by source
-    discord_name: str = ""
-    discord_demo: bool = False
+    imported: list[tuple[str, str]] = field(default_factory=list)  # (source, channel) pushed through /ingest
+    roadmap_repo: str = "ovh/public-cloud-roadmap"
+    repos: list[str] = field(default_factory=list)
+    subreddits: list[str] = field(default_factory=list)
+    discord_servers: list[tuple[str, bool]] = field(default_factory=list)  # (name, demo)
     source: str | None = None  # report restricted to one channel (forum, github, roadmap, reddit, discord)
 
 
@@ -55,17 +57,25 @@ async def snapshot(collector: Collector, docs: DocsIndex, days: int = 7, source:
         errors=dict(collector.errors),
         reddit=collector.reddit_enabled,
         discord=collector.discord_enabled,
-        imported={
-            k: v for k, v in collector.inbox.channels().items() if not (k == "reddit" and collector.reddit_enabled)
-        },
-        discord_name=collector.discord.guild_name,
-        discord_demo=collector.discord.demo,
+        imported=[
+            (k, c)
+            for k, c in collector.inbox.channels()
+            if collector.config.allows_import(k, c) and not (k == "reddit" and collector.reddit_enabled)
+        ],
+        roadmap_repo=collector.config.roadmap,
+        repos=collector.config.repos(),
+        subreddits=collector.config.subreddits(),
+        discord_servers=[(d.name, d.demo) for d in collector.discords.values() if d.enabled],
         source=source,
     )
 
 
 def top_nav(page: str, days: int) -> str:
-    links = [("report", f"/report?days={days}", "Report"), ("triage", f"/triage?days={days}", "Triage")]
+    links = [
+        ("report", f"/report?days={days}", "Report"),
+        ("triage", f"/triage?days={days}", "Triage"),
+        ("sources", f"/sources?days={days}", "Sources"),
+    ]
     return (
         "<nav class=top>"
         + "".join(f'<a href="{href}" class="{"on" if key == page else ""}">{name}</a>' for key, href, name in links)
@@ -93,9 +103,10 @@ def _platform_links(s: Snapshot) -> str:
     sources = ["forum", "github", "roadmap"]
     if s.discord:
         sources.append("discord")
-    if s.reddit or "reddit" in s.imported:
+    imported = [k for k, _ in s.imported]
+    if s.reddit or "reddit" in imported:
         sources.append("reddit")
-    sources += [k for k in s.imported if k not in sources]
+    sources += [k for k in dict.fromkeys(imported) if k not in sources]
     links = [(None, "All")] + [(k, SOURCE_NAMES.get(k, k.title())) for k in sources]
     return (
         "<div class=platforms><b>Platform</b>"
@@ -131,6 +142,7 @@ SOURCE_NAMES = {
     "roadmap": "Roadmap",
     "reddit": "Reddit",
     "discord": "Discord",
+    "rss": "RSS feeds",
 }
 
 
@@ -265,11 +277,11 @@ def render_html(s: Snapshot) -> str:
         )
         or "<tr><td colspan=4 class=muted>No roadmap activity in this period.</td></tr>"
     )
+    demo_servers = ", ".join(f"« {escape(name)} »" for name, demo in s.discord_servers if demo)
     demo_note = (
-        f"<p class=demo-note>Discord threads come from the demo server « {escape(s.discord_name or 'unnamed')} »: "
-        "fictional conversations written to show the radar at work, marked <b>DEMO</b>. They are not real "
-        "community signals.</p>"
-        if s.discord_demo and p.by_source.get("discord")
+        f"<p class=demo-note>Threads marked <b>DEMO</b> come from the demo Discord server {demo_servers}: fictional "
+        "conversations written to show the radar at work. They are not real community signals.</p>"
+        if demo_servers and p.by_source.get("discord")
         else ""
     )
     errors = f"<p class=note>Unavailable during this run: {escape(', '.join(s.errors))}.</p>" if s.errors else ""
@@ -290,8 +302,8 @@ milestones, linked pull requests), not only from comments.</p>
 <table><tr><th>Community question</th><th>Closest official guide (match score)</th></tr>{gaps}</table>
 <h2>Most wanted on the roadmap</h2>
 <table><tr><th>Request</th><th>Votes</th><th>Comments</th><th>Labels</th></tr>{requests}</table>
-<p class=note>Sources: community.ovhcloud.com (Public Cloud), github.com/ovh/public-cloud-roadmap,
-ovh/terraform-provider-ovh, ovh/ovhcloud-cli,{" Reddit r/ovh," if s.reddit else ""}{"".join(f" {escape(c)} (imported)," for c in s.imported.values())}{f" Discord server « {escape(s.discord_name or 'unnamed')} »{' (fictional demo data)' if s.discord_demo else ''}," if s.discord else ""} github.com/ovh/docs. Independent project built on public
+<p class=note>Sources: community.ovhcloud.com (Public Cloud), github.com/{escape(s.roadmap_repo)},
+{"".join(f" {escape(r)}," for r in s.repos)}{"".join(f" Reddit r/{escape(r)}," for r in s.subreddits) if s.reddit else ""}{"".join(f" {escape(c)} (imported)," for _, c in s.imported)}{"".join(f" Discord server « {escape(name)} »{' (fictional demo data)' if demo else ''}," for name, demo in s.discord_servers)} github.com/ovh/docs. Independent project built on public
 data, not affiliated with OVHcloud.</p>{errors}
 </main></body></html>"""
 

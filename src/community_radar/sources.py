@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from .config import SourceConfig, SourceStore
 from .discord_source import DiscordSource, display_name, snowflake_time
 from .inbox import Inbox
 from .models import Thread
@@ -23,10 +24,7 @@ from .triage import TriageStore
 USER_AGENT = "community-radar-mcp/0.1 (+https://github.com/Kestrall/community-radar-mcp)"
 FORUM = "https://community.ovhcloud.com"
 FORUM_CATEGORY = "public-cloud/11"
-ROADMAP_REPO = "ovh/public-cloud-roadmap"
-ISSUE_REPOS = ("ovh/terraform-provider-ovh", "ovh/ovhcloud-cli")
 STAFF_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
-SUBREDDIT = "ovh"
 
 
 def parse_date(value: str | None) -> datetime:
@@ -106,13 +104,16 @@ class Collector:
         self.reddit_secret = os.getenv("REDDIT_CLIENT_SECRET")
         # Reddit requires approved API access (Responsible Builder Policy): the channel is off without credentials.
         self.reddit_enabled = bool(self.reddit_id and self.reddit_secret)
-        # Discord only through a bot invited by the server admins: off without DISCORD_BOT_TOKEN/DISCORD_GUILD_ID.
-        self.discord = DiscordSource(self.client)
+        self.errors: dict[str, str] = {}
+        # Watched repositories, Discord servers, subreddits and feeds (RADAR_SOURCES_PATH, edited on /sources).
+        self.sources = SourceStore(os.getenv("RADAR_SOURCES_PATH"))
+        # Discord only through a bot invited by each server's admins: one reader per configured server.
+        self.discords: dict[str, DiscordSource] = {}
+        self.apply_sources(self.sources.config)
         # Threads pushed by an external collector through POST /ingest (see inbox.py).
         self.inbox = Inbox.from_env()
         # Triage statuses and history (RADAR_TRIAGE_PATH: SQLite file; in memory when unset).
         self.triage = TriageStore(os.getenv("RADAR_TRIAGE_PATH"))
-        self.errors: dict[str, str] = {}
 
     # --- HTTP helpers -------------------------------------------------------------------------
 
@@ -255,14 +256,17 @@ class Collector:
         return await self.slow_cache.get("reddit-token", fetch)
 
     async def _reddit(self) -> list[Thread]:
-        """r/ovh newest posts through the official API (needs approved REDDIT_CLIENT_ID/SECRET)."""
-        response = await self.client.get(
-            f"https://oauth.reddit.com/r/{SUBREDDIT}/new",
-            params={"limit": 100, "raw_json": 1},
-            headers={"Authorization": f"Bearer {await self._reddit_token()}"},
-        )
-        response.raise_for_status()
-        return [self._reddit_post(child["data"]) for child in response.json()["data"]["children"]]
+        """Newest posts of the configured subreddits through the official API (needs approved credentials)."""
+        threads: list[Thread] = []
+        for subreddit in self.config.subreddits():
+            response = await self.client.get(
+                f"https://oauth.reddit.com/r/{subreddit}/new",
+                params={"limit": 100, "raw_json": 1},
+                headers={"Authorization": f"Bearer {await self._reddit_token()}"},
+            )
+            response.raise_for_status()
+            threads += [self._reddit_post(child["data"]) for child in response.json()["data"]["children"]]
+        return threads
 
     @staticmethod
     def _reddit_post(post: dict[str, Any]) -> Thread:
@@ -282,7 +286,7 @@ class Collector:
                 reactions=max(post.get("score", 0), 0),
                 answered=post.get("num_comments", 0) > 0,
                 labels=[post["link_flair_text"]] if post.get("link_flair_text") else [],
-                channel=f"r/{SUBREDDIT}",
+                channel=f"r/{post.get('subreddit', '')}",
             )
         )
 
@@ -290,19 +294,61 @@ class Collector:
 
     @property
     def discord_enabled(self) -> bool:
-        return self.discord.enabled
+        return any(d.enabled for d in self.discords.values())
 
-    async def discord_topic(self, thread_id: str) -> list[Post]:
+    def discord_for(self, url: str) -> DiscordSource:
+        """The reader of the server a discord.com/channels/<server>/... link belongs to."""
+        match = re.search(r"/channels/(\d+)/", url)
+        source = self.discords.get(match.group(1)) if match else None
+        if not source or not source.enabled:
+            raise ValueError(
+                "This Discord server is not configured on the Sources page (or DISCORD_BOT_TOKEN is unset)."
+            )
+        return source
+
+    async def discord_topic(self, thread_id: str, url: str) -> list[Post]:
         """Full conversation of a Discord thread or question (`channel/message` id), staff flagged by role."""
         channel, root = thread_id.split("/")
+        source = self.discord_for(url)
 
         async def fetch() -> list[Post]:
             return [
                 Post(display_name(m.get("author")), snowflake_time(m["id"]), m.get("content") or "", m["staff"])
-                for m in await self.discord.conversation(channel, root)
+                for m in await source.conversation(channel, root)
             ]
 
-        return await self.cache.get(f"discord-topic:{thread_id}", fetch)
+        return await self.cache.get(f"discord-topic:{source.guild}:{thread_id}", fetch)
+
+    # --- Configuration ------------------------------------------------------------------------
+
+    @property
+    def config(self) -> SourceConfig:
+        return self.sources.config
+
+    def apply_sources(self, config: SourceConfig) -> None:
+        """(Re)build the readers from the configuration and drop cached data, so changes show at the next view."""
+        previous = self.discords
+        self.discords = {}
+        for d in config.guilds():
+            reader = DiscordSource(
+                self.client, guild=d["guild"], channels=d["channels"], demo=d["demo"], label=d["label"]
+            )
+            old = previous.get(d["guild"])
+            if old and old.channel_filter == reader.channel_filter:
+                reader.guild_name, reader._members, reader._staff_roles = old.guild_name, old._members, old._staff_roles
+            self.discords[d["guild"]] = reader
+        self.cache = TTLCache(self.cache.ttl)
+        self.slow_cache = TTLCache(self.slow_cache.ttl)
+        self.reddit_cache = TTLCache(self.reddit_cache.ttl)
+        self.errors.clear()
+
+    def save_sources(self, data: Any) -> SourceConfig:
+        config = self.sources.save(data)
+        self.apply_sources(config)
+        return config
+
+    def is_roadmap(self, repo: str) -> bool:
+        return repo.lower() == self.config.roadmap.lower()
 
     # --- Public API ---------------------------------------------------------------------------
 
@@ -316,8 +362,8 @@ class Collector:
 
         fetches = [
             guarded("forum", self._forum),
-            guarded("roadmap-recent", lambda: self._issues(ROADMAP_REPO, "roadmap", 2, since)),
-            *(guarded(repo, lambda r=repo: self._issues(r, "github", 2, since)) for repo in ISSUE_REPOS),
+            guarded("roadmap-recent", lambda: self._issues(self.config.roadmap, "roadmap", 2, since)),
+            *(guarded(repo, lambda r=repo: self._issues(r, "github", 2, since)) for repo in self.config.repos()),
         ]
         if self.reddit_enabled:
             fetches.append(
@@ -325,19 +371,24 @@ class Collector:
                     "reddit", lambda: self._guarded("reddit", self._reddit), refresh, self._succeeded("reddit")
                 )
             )
-        if self.discord_enabled:
-            fetches.append(guarded("discord", lambda: self.discord.threads(since)))
+        for guild, reader in self.discords.items():
+            if reader.enabled:
+                fetches.append(guarded(f"discord:{guild}", lambda r=reader: r.threads(since)))
         batches = await asyncio.gather(*fetches)
         live = {t.source for batch in batches for t in batch} | ({"reddit"} if self.reddit_enabled else set())
         # Imported channels cover every OVHcloud product: keep the Public Cloud threads only.
-        imported = [t for t in self.inbox.threads() if t.source not in live and in_public_cloud(t)]
+        imported = [
+            t
+            for t in self.inbox.threads()
+            if t.source not in live and self.config.allows_import(t.source, t.channel) and in_public_cloud(t)
+        ]
         return [t for batch in batches for t in batch] + imported
 
     async def roadmap(self, refresh: bool = False) -> list[Thread]:
         """The whole public roadmap (open and closed issues), cached longer: it changes slowly."""
         return await self.slow_cache.get(
             "roadmap-all",
-            lambda: self._guarded("roadmap", lambda: self._issues(ROADMAP_REPO, "roadmap", 10)),  # API cap: 1000
+            lambda: self._guarded("roadmap", lambda: self._issues(self.config.roadmap, "roadmap", 10)),  # cap: 1000
             refresh,
             self._succeeded("roadmap"),
         )
@@ -346,7 +397,7 @@ class Collector:
         """A GitHub issue with its full body and comments (maintainers flagged as staff)."""
         base = f"https://api.github.com/repos/{repo}/issues/{number}"
         issue, comments = await asyncio.gather(self._json(base), self._json(f"{base}/comments", per_page=50))
-        source = "roadmap" if repo == ROADMAP_REPO else "github"
+        source = "roadmap" if self.is_roadmap(repo) else "github"
         thread = self._issue(issue, repo, source)
         opening = Post(thread.author, thread.created, issue.get("body") or "", False)
         return thread, [opening] + [

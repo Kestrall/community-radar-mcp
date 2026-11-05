@@ -20,6 +20,7 @@ from .queue_page import find_thread, load_queue, render_queue
 from .report import SOURCE_NAMES, render_html, render_telegram, snapshot
 from .server import create_server
 from .sources import USER_AGENT, Collector
+from .sources_page import render_sources, source_status
 
 
 def _days(request: Request, default: int = 7) -> int:
@@ -46,7 +47,7 @@ def add_routes(server: MCPServer, collector: Collector, docs: DocsIndex) -> None
     @server.custom_route("/triage", methods=["GET"])
     async def triage_page(request: Request) -> Response:
         days = _days(request, 30)
-        demo = collector.discord.guild_name if collector.discord.demo else ""
+        demo = ", ".join(d.name for d in collector.discords.values() if d.enabled and d.demo)
         refresh = request.query_params.get("refresh") == "1"  # skip the cache, e.g. right after a demo message
         return HTMLResponse(render_queue(await load_queue(collector, days, refresh), days, demo))
 
@@ -101,6 +102,34 @@ def add_routes(server: MCPServer, collector: Collector, docs: DocsIndex) -> None
                 "updated": ticket.updated.isoformat(),
             }
         )
+
+    @server.custom_route("/sources", methods=["GET"])
+    async def sources_page(request: Request) -> Response:
+        status = await source_status(collector)
+        return HTMLResponse(render_sources(collector.config.to_dict(), status, _days(request)))
+
+    @server.custom_route("/api/sources", methods=["GET", "POST"])
+    async def sources_api(request: Request) -> Response:
+        if request.method == "GET":
+            return JSONResponse(collector.config.to_dict())
+        if request.headers.get("x-radar-triage") != "1" or not request.headers.get("content-type", "").startswith(
+            "application/json"
+        ):
+            return JSONResponse({"error": "JSON with the X-Radar-Triage header expected"}, status_code=400)
+        try:
+            config = collector.save_sources(await request.json())
+        except (ValueError, json.JSONDecodeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(config.to_dict())
+
+    @server.custom_route("/api/sources/feeds", methods=["GET"])
+    async def feeds_api(request: Request) -> Response:
+        """Feeds an external collector should read and push to /ingest (same bearer token as /ingest)."""
+        token = os.getenv("RADAR_INGEST_TOKEN", "")
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not token or not hmac.compare_digest(given.encode(), token.encode()):
+            return JSONResponse({"error": "invalid token"}, status_code=401)
+        return JSONResponse({"feeds": collector.config.imported_feeds()})
 
     @server.custom_route("/ingest", methods=["POST"])
     async def ingest(request: Request) -> Response:

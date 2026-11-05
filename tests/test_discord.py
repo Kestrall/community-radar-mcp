@@ -145,9 +145,11 @@ async def test_solved_tag_and_archived_posts(discord_env):
 async def test_conversation_flags_staff_and_feeds_follow_ups(discord_env):
     mock_discord(respx)
     collector = Collector(github_token="")
-    posts = await collector.discord_topic(f"{POST_ID}/{POST_ID}")
+    posts = await collector.discord_topic(f"{POST_ID}/{POST_ID}", f"https://discord.com/channels/{GUILD}/{POST_ID}")
     assert [(p.author, p.staff) for p in posts] == [("Alice", False), ("Ovh_Maxime", True), ("Alice", False)]
-    thread = next(t for t in await collector.discord.threads(NOW - timedelta(days=30)) if t.id.startswith(POST_ID))
+    thread = next(
+        t for t in await collector.discords[GUILD].threads(NOW - timedelta(days=30)) if t.id.startswith(POST_ID)
+    )
     status = followup.assess_forum(thread, posts, NOW, min_days=0)
     assert status.status == "waiting_on_us"  # Alice asked again after the staff answer
 
@@ -183,7 +185,7 @@ async def test_explains_missing_permissions(discord_env):
     collector = Collector(github_token="")
     respx.get(url__regex=r"https://(community\.ovhcloud\.com|api\.github\.com)/.*").respond(json={})
     await collector.threads()
-    assert "Message Content intent" in collector.errors["discord"]
+    assert "Message Content intent" in collector.errors[f"discord:{GUILD}"]
 
 
 def test_webhooks_only_count_on_demo_servers(discord_env, monkeypatch):
@@ -215,7 +217,9 @@ async def test_report_flags_demo_threads_and_names_the_server(discord_env, monke
     collector = FakeCollector(
         threads=[thread(source="discord", title="Instance stuck in rescue", answered=False, demo=True, id="1/1")]
     )
-    collector.discord.enabled, collector.discord.demo, collector.discord.guild_name = True, True, "Radar Démo"
+    reader = DiscordSource(httpx.AsyncClient(), token="t", guild=GUILD, demo=True)
+    reader.guild_name = "Radar Démo"
+    collector.discords = {GUILD: reader}
     page = render_html(await snapshot(collector, DocsIndex([]), 7, "discord"))
     assert "Community Radar · Discord" in page and 'badge demo">demo' in page
     assert "« Radar Démo » (fictional demo data)" in page and "OVHcloud Discord" not in page

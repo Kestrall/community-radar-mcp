@@ -32,6 +32,8 @@ tutorials.
 - **A triage queue with history**: statuses (new, in progress, escalated to Support / Product / Engineering /
   Docs, waiting on user, answered, resolved, dismissed), notes and a full log. Handled threads come back on top when
   the community writes again.
+- **Sources you control**: add or switch off GitHub repositories, Discord servers, subreddits and RSS feeds from
+  the Sources page (up to 20 of each), with the thread count or last error of each one.
 - **Irritant reports and tutorial ideas** for product and docs teams, with the threads as evidence.
 - **Built for an assistant**: 11 MCP tools and 3 prompts, so Claude (or any MCP client) can triage, draft an
   on-brand reply with the right guide, or write the weekly note for product managers. It drafts; it never posts.
@@ -49,6 +51,8 @@ flowchart LR
     radar["Collector + classifier + follow-up analysis"] --> mcp["11 MCP tools → AI assistant"]
     radar --> report["/report and weekly digest"]
     radar --> triage["/triage queue + SQLite history"]
+    sources["/sources: repos, servers, subreddits, feeds"] -.-> radar
+    sources -.->|"feeds to read"| ingest
 ```
 
 ## What it watches
@@ -174,10 +178,37 @@ Over HTTP the server also serves, next to `/mcp`:
   for an answer, content gaps, most wanted roadmap items), light and dark mode.
 - `GET /digest.json?days=7`: the same snapshot as Telegram-ready messages, used by an n8n workflow that posts the
   weekly digest every Monday.
-- `POST /ingest`: threads pushed by an external collector, see below.
+- `GET /triage`, `GET /sources`: the triage queue and the sources page, see below.
+- `POST /ingest`: threads pushed by an external collector; `GET /api/sources/feeds`: what it should read.
 - `GET /health`
 
 From the shell: `community-radar report --days 7 -o radar.html`, `community-radar digest --days 7`.
+
+## Sources
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/sources-dark.png">
+  <img alt="Sources page: GitHub repositories, Discord servers, subreddits and feeds, each with its thread count" src="docs/img/sources-light.png">
+</picture>
+
+`GET /sources` lists what the radar watches, with the number of threads each source brought or its last error.
+Add a source with **+ Add**, switch it off with its checkbox, remove it with **×**, then save: the radar reloads
+right away, no restart.
+
+| Kind | Up to | How it is read |
+|---|---|---|
+| Public roadmap | 1 | GitHub issues of the roadmap repository (requests, votes, shipped state) |
+| GitHub repositories | 20 | issues of each `owner/repo` (bugs, questions) |
+| Discord servers | 20 | the same read-only bot, invited on each server; optional label, channel filter and demo flag |
+| Subreddits | 20 | the official API when credentials are approved, otherwise your own collector pushes them to `/ingest` |
+| RSS / Atom feeds | 20 | your own collector pushes them to `/ingest` |
+
+The configuration is saved to `RADAR_SOURCES_PATH` (JSON). Until the first save, defaults come from the
+environment. Tokens never appear on the page: they stay in the server environment.
+
+An external collector (an n8n workflow, a cron job) gets the subreddits and feeds to read from
+`GET /api/sources/feeds` (same bearer token as `/ingest`) and pushes what it reads to `/ingest`. Threads of a
+subreddit or feed you switch off disappear from the radar.
 
 ## Triage queue
 
@@ -238,6 +269,7 @@ imported `reddit` channel is hidden as soon as the official Reddit API is config
 | `DISCORD_PAGES` | `5` | pages read per channel (100 messages or 50 archived posts each) |
 | `RADAR_INGEST_TOKEN` | – | enables `POST /ingest` for threads pushed by an external collector (bearer token) |
 | `RADAR_INBOX_PATH` | in memory | JSON file that keeps imported threads (120 days) |
+| `RADAR_SOURCES_PATH` | defaults | JSON file that keeps the sources edited on `/sources` |
 | `RADAR_TRIAGE_PATH` | in memory | SQLite file that keeps triage statuses and their history |
 | `RADAR_CACHE_TTL` | `900` | cache for community data, in seconds (the full roadmap is cached 6 h) |
 | `RADAR_DOCS_INDEX` | bundled | path to a guide index rebuilt with `community-radar build-docs` |

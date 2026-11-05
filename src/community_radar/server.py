@@ -17,7 +17,7 @@ from .models import Guide, Thread
 from .products import PRODUCTS, SIGNALS, label
 from .products import resolve_product as _resolve_product
 from .queue_page import find_thread, load_queue
-from .sources import FORUM, ISSUE_REPOS, ROADMAP_REPO, SUBREDDIT, Collector, RateLimited
+from .sources import FORUM, Collector, RateLimited
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 # Writes to the radar's own triage store only: nothing is posted on the community platforms.
@@ -396,11 +396,9 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
             for p in posts[1:]:
                 p.staff = p.staff or p.author in staff
         elif chat := re.search(r"discord(?:app)?\.com/channels/\d+/(\d+)(?:/(\d+))?", url):
-            if not collector.discord_enabled:
-                raise ToolError("Discord is not configured: set DISCORD_BOT_TOKEN and DISCORD_GUILD_ID.")
             thread_id = f"{chat.group(1)}/{chat.group(2) or chat.group(1)}"
             try:
-                posts = await collector.discord_topic(thread_id)
+                posts = await collector.discord_topic(thread_id, url)
             except (ValueError, httpx.HTTPStatusError) as exc:
                 raise ToolError(f"Could not read this Discord conversation: {exc}") from exc
             if not posts:
@@ -504,18 +502,26 @@ def create_server(collector: Collector, docs: DocsIndex) -> MCPServer:
     @mcp.resource("radar://sources", mime_type="text/markdown")
     def sources_resource() -> str:
         """Channels watched by the radar."""
-        repos = "\n".join(f"- GitHub issues: https://github.com/{r}" for r in ISSUE_REPOS)
+        repos = "\n".join(f"- GitHub issues: https://github.com/{r}" for r in collector.config.repos())
         return (
             f"- Forum, Public Cloud category: {FORUM}/c/public-cloud/11\n"
-            f"- Public roadmap: https://github.com/{ROADMAP_REPO}\n{repos}\n"
-            + (f"- Reddit: https://www.reddit.com/r/{SUBREDDIT}\n" if collector.reddit_enabled else "")
+            f"- Public roadmap: https://github.com/{collector.config.roadmap}\n{repos}\n"
+            + "".join(
+                f"- Reddit: https://www.reddit.com/r/{r}\n"
+                for r in collector.config.subreddits()
+                if collector.reddit_enabled
+            )
             + (
-                f"- Discord: server {collector.discord.guild}, through an invited read-only bot\n"
-                if collector.discord_enabled
-                else ""
+                "".join(
+                    f"- Discord: server « {d.name} », through an invited read-only bot\n"
+                    for d in collector.discords.values()
+                    if d.enabled
+                )
             )
             + "".join(
-                f"- {channel}: imported by an external collector\n" for channel in collector.inbox.channels().values()
+                f"- {channel}: imported by an external collector\n"
+                for source, channel in collector.inbox.channels()
+                if collector.config.allows_import(source, channel)
             )
             + f"- Official guides: https://github.com/ovh/docs ({len(docs.guides)} Public Cloud guides indexed)\n"
         )

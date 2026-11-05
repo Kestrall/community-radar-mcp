@@ -111,9 +111,9 @@ class Inbox:
             tmp.write_text(json.dumps(self._items, ensure_ascii=False))
             tmp.replace(self.path)
 
-    def channels(self) -> dict[str, str]:
-        """Imported channels by source, e.g. {"reddit": "r/ovh"}."""
-        return {v["source"]: v["channel"] for v in self._items.values()}
+    def channels(self) -> list[tuple[str, str]]:
+        """Imported (source, channel) pairs, e.g. [("reddit", "r/ovh"), ("rss", "Cloud blog")]."""
+        return sorted({(v["source"], v["channel"]) for v in self._items.values()})
 
     def threads(self) -> list[Thread]:
         """Imported threads as radar threads. Comment counts are often unknown, so `answered` stays None."""
